@@ -134,7 +134,11 @@ def collect_refs(value, aliases: Optional[dict] = None, out: Optional[list] = No
     if ref:
         out.append(ref)
         return out
-    for item in value.values():
+    for key, item in value.items():
+        # a selector pins formatting to one data point; it names a field but
+        # does not use it, and Power BI keeps stale ones after a rename
+        if key == "selector":
+            continue
         collect_refs(item, scope, out)
     return out
 
@@ -355,9 +359,20 @@ def read_report(path) -> Optional[ReportResult]:
             names = [n.replace("\\", "/") for n in archive.namelist()]
             lookup = {n.replace("\\", "/"): n for n in archive.namelist()}
             result = _from_paths(names, lambda p: decode(archive.read(lookup[p])), _stem(path.name))
-        if lower.endswith(".pbix") and result.model is None:
-            result.note = (f"{path.name}: its model is stored in a binary format that cannot be read here, "
-                           "so add the INFO.MEASURES export (or save the file as .pbit).")
+            has_model = "DataModel" in lookup
+            if lower.endswith(".pbix") and result.model is None:
+                if not has_model:
+                    result.note = (f"{path.name} has no model of its own: it is a thin report on a published "
+                                   "semantic model. Add the INFO.MEASURES export from that model.")
+                else:
+                    from .pbix_model import read_model
+                    try:
+                        result.model = read_model(archive.read(lookup["DataModel"]))
+                        result.found.append(f"{_stem(path.name)} (model from the .pbix: "
+                                            f"{len(result.model['measures'])} measures, {len(result.model['columns'])} columns)")
+                    except ValueError as err:
+                        result.note = (f"{path.name}: its model could not be read ({err}). "
+                                       "Add the INFO.MEASURES export, or save the file as .pbit.")
         return result
     if lower.endswith((".json", ".bim")) or lower == "layout":
         try:

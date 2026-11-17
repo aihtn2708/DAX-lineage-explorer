@@ -54,9 +54,10 @@ def test_roles_filters_formatting_and_hierarchies(fixtures):
     assert ("Products", "Margin by category", "pivotTable", "Values", "column", "Sales", "Quantity") in usages
 
 
-def test_pbix_needs_the_export_and_pbit_does_not(fixtures):
+def test_pbix_with_an_unreadable_model_says_why(fixtures):
+    # the fixture's DataModel is a placeholder, not a real model
     pbix = read_report(fixtures / "sales.pbix")
-    assert pbix.model is None and "binary" in pbix.note
+    assert pbix.model is None and "could not be read" in pbix.note
     pbit = read_report(fixtures / "sales.pbit")
     assert len(pbit.model["measures"]) == 24
 
@@ -107,8 +108,8 @@ def test_cli_where_used(capsys, fixtures):
     assert "Products > Margin by category  [pivotTable]  via Gross Margin" in out
 
 
-def test_cli_pbix_alone_explains(fixtures):
-    with pytest.raises(SystemExit, match="binary"):
+def test_cli_pbix_with_unreadable_model_explains(fixtures):
+    with pytest.raises(SystemExit, match="could not be read"):
         main(["unused", "-s", str(fixtures / "sales.pbix")])
 
 
@@ -127,3 +128,30 @@ def test_cli_build_page_carries_usage(tmp_path, fixtures):
     main(["build", "-s", str(SAMPLE_XLSX), "-r", str(fixtures / "sales.pbix"), "-o", str(out)])
     html = out.read_text(encoding="utf-8")
     assert '"unusedMeasures"' in html and '"kind":"visual"' in html
+
+
+def test_pbix_model_matches_the_browser(tmp_path):
+    """The synthetic .pbix from tests/js/pbix.test.js, read by Python: same lineage as the CSV export."""
+    import shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("node builds the synthetic .pbix")
+    target = tmp_path / "Sales.pbix"
+    subprocess.run(["node", str(ROOT / "tests" / "js" / "pbix.test.js"), "--write", str(target)], check=True,
+                   capture_output=True)
+    result = read_report(target)
+    assert result.model and not result.note
+    from dax_lineage.load import catalogue_from_rows
+    lineage = build_graph(catalogue_from_rows(result.model), usages=result.usages)
+    stats = lineage.stats()
+    assert (stats["measures"], stats["edges"]) == (24, 68)
+    assert len(stats["report"]["unusedMeasures"]) == 11
+    assert not [n for n in lineage.nodes.values() if n.name.startswith("H$") or "RowNumber" in n.name]
+
+
+def test_real_pbix_when_given():
+    import os
+    path = os.environ.get("DAX_LINEAGE_PBIX")
+    if not path:
+        pytest.skip("set DAX_LINEAGE_PBIX to check a real file")
+    result = read_report(path)
+    assert result.model, result.note

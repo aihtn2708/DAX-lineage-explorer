@@ -128,6 +128,15 @@ def _bool(row: dict, *names: str) -> bool:
     return bool(text)
 
 
+# TMSCHEMA / INFO.* give an object's state as a number (ObjectState)
+_STATES = {"1": "Ready", "3": "NoData", "4": "CalculationNeeded", "5": "SemanticError", "6": "EvaluationError",
+           "7": "DependencyError", "8": "Incomplete", "9": "SyntaxError", "10": "ForceCalculationNeeded"}
+
+
+def _state_name(value: str) -> str:
+    return _STATES.get(value, f"State {value}") if value.isdigit() else value
+
+
 # -- per-query loaders ------------------------------------------------------
 
 
@@ -163,7 +172,7 @@ def measures_from_rows(rows) -> list:
                 format_string=_text(row, "FormatString"),
                 display_folder=_text(row, "DisplayFolder"),
                 is_hidden=_bool(row, "IsHidden"),
-                state=_text(row, "State"),
+                state=_state_name(_text(row, "State")),
                 error_message=_text(row, "ErrorMessage"),
                 data_type=_text(row, "DataType"),
                 modified_time=_text(row, "ModifiedTime"),

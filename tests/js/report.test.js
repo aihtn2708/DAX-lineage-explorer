@@ -8,6 +8,9 @@ const { execFileSync } = require("child_process");
 const { JSDOM } = require("jsdom");
 globalThis.DOMParser = new JSDOM("").window.DOMParser;
 globalThis.Zip = require("../../docs/js/zip.js");
+globalThis.Xpress9 = require("../../docs/js/xpress9.js");
+globalThis.SqliteReader = require("../../docs/js/sqlite.js");
+globalThis.PbixModel = require("../../docs/js/pbixmodel.js");
 const X = require("../../docs/js/xlsx.js");
 const L = require("../../docs/js/lineage.js");
 const R = require("../../docs/js/report.js");
@@ -53,8 +56,9 @@ const key = u => [u.page, u.title, u.visualType, u.role, u.kind, u.table, u.name
     await check(`${name} gives exactly the same usage as the layout`, () =>
       assert.deepStrictEqual(results[name].usages.map(key).sort(), reference));
   }
-  await check(".pbix says its model needs the INFO export; .pbit carries the model", () => {
-    assert.ok(/binary format/.test(results[".pbix"].note));
+  await check(".pbix with an unreadable model says why; .pbit carries the model", () => {
+    // the fixture's DataModel is a placeholder, not a real model
+    assert.ok(/could not be read/.test(results[".pbix"].note), results[".pbix"].note);
     assert.strictEqual(results[".pbix"].model, null);
     assert.ok(results[".pbit"].model && results[".pbit"].model.find(s => s.kind === "measures").rows.length === 24);
   });

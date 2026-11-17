@@ -43,7 +43,7 @@
         <button data-sample="sample-problems">Try a model with problems</button>
       </div>
       <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere.
-        A .pbix is read in slices, so only its report layout is loaded, not the model data.</p>
+        From a .pbix only the report layout and the model's definitions are read, never its data.</p>
       <input type="file" id="addReportFile" multiple accept=".pbix,.pbit,.zip,.json,.bim" hidden>
     </div>
     <div class="error" id="error" hidden></div>
@@ -77,8 +77,8 @@
       <div class="card">
         <h4>3 · Add the report (optional)</h4>
         <ul>
-          <li><b>.pbix</b>: the report only. Its model is binary, so drop it with the INFO export</li>
-          <li><b>.pbit</b> (File → Export → Power BI template): report and model in one file, drop it alone</li>
+          <li><b>.pbix</b>: report and model in one file, drop it alone. The model's definitions are decompressed here in the browser</li>
+          <li><b>.pbit</b> (File → Export → Power BI template): the same, smaller</li>
           <li><b>PBIP</b>: pick or drop the project folder</li>
         </ul>
         <p style="margin-top:10px">"Unused" means unused in the reports you load. Other reports on the same
@@ -141,6 +141,10 @@
   </aside>
 
   <div class="canvas-wrap">
+    <div class="viewtabs" role="tablist">
+      <button data-view="graph" class="on">Graph</button><button data-view="table">Usage list</button>
+    </div>
+    <div class="usage-table" id="usageTable" hidden></div>
     <svg class="canvas" id="svg"><g id="viewport"><g id="edges"></g><g id="nodes"></g></g></svg>
     <div class="zoomer">
       <button id="zoomIn" title="Zoom in">+</button>
@@ -163,6 +167,9 @@
 </main>
 
 <script src="js/zip.js"></script>
+<script src="js/xpress9.js"></script>
+<script src="js/sqlite.js"></script>
+<script src="js/pbixmodel.js"></script>
 <script src="js/lineage.js"></script>
 <script src="js/xlsx.js"></script>
 <script src="js/report.js"></script>

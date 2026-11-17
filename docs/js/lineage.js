@@ -137,6 +137,11 @@
     return null;
   }
 
+  // TMSCHEMA / INFO.* give an object's state as a number (Microsoft.AnalysisServices.Tabular.ObjectState)
+  const STATES = { 1: "Ready", 3: "NoData", 4: "CalculationNeeded", 5: "SemanticError", 6: "EvaluationError",
+                   7: "DependencyError", 8: "Incomplete", 9: "SyntaxError", 10: "ForceCalculationNeeded" };
+  const stateName = s => (/^\d+$/.test(s) ? STATES[s] || `State ${s}` : s);
+
   /* ---------------- catalogue ---------------- */
 
   function buildCatalogue(sources) {
@@ -156,7 +161,7 @@
             tableName: text(row, "Table", "TableName"),
             description: text(row, "Description"), formatString: text(row, "FormatString"),
             displayFolder: text(row, "DisplayFolder"), isHidden: bool(row, "IsHidden"),
-            state: text(row, "State"), errorMessage: text(row, "ErrorMessage"),
+            state: stateName(text(row, "State")), errorMessage: text(row, "ErrorMessage"),
             dataType: text(row, "DataType")
           });
         } else if (kind === "tables") {

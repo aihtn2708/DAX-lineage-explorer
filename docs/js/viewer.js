@@ -48,6 +48,9 @@ const state = {
   showUnreferenced: false,
   showVisuals: true,
   unusedOnly: false,
+  mode: "graph",
+  usageFilter: "unusedAll",
+  usageKind: "measure",
   focusOnly: false,
   view: { x: 40, y: 40, k: 1 },
   positions: new Map(),
@@ -111,7 +114,7 @@ function renderHeader() {
   if ($("csvWhereUsed")) $("csvWhereUsed").onclick = exportWhereUsed;
   if ($("addReport")) $("addReport").onclick = () => window.onLineageAddReport();
   const jump = document.querySelector("[data-usage-jump]");
-  if (jump) jump.onclick = e => { e.preventDefault(); $("sort").value = "usage"; state.sort = "usage"; renderList(); };
+  if (jump) jump.onclick = e => { e.preventDefault(); state.usageFilter = "unusedAll"; setMode("table"); };
 }
 
 /* ---------- sidebar list ---------- */
@@ -444,6 +447,7 @@ function render() {
   applyView();
   renderList();
   renderDetail();
+  if (state.mode === "table") renderUsageTable();
 }
 
 function applyView() {
@@ -662,6 +666,128 @@ function exportWhereUsed() {
   downloadCsv("where-used.csv", CSV_HEADER, whereUsedRows(false));
 }
 
+/* ---------- usage list: the where-used table ---------- */
+
+const USAGE_ORDER = ["unused", "deadChain", "indirect", "structural", "visual"];
+
+function usageRows() {
+  const q = state.query.toLowerCase();
+  return DATA.nodes.filter(n => (n.kind === "measure" || n.kind === "column") && n.usage && n.exists)
+    .filter(n => state.usageKind === "all" || n.kind === state.usageKind)
+    .filter(n => state.showHidden || !n.isHidden)
+    .filter(n => !state.table || n.table === state.table)
+    .filter(n => !q || n.label.toLowerCase().includes(q) || (n.table || "").toLowerCase().includes(q));
+}
+
+function renderUsageTable() {
+  const box = $("usageTable");
+  if (!hasReport()) {
+    box.innerHTML = `<div class="empty usage-empty"><b>The usage list needs the report.</b><br>
+      ${typeof window.onLineageAddReport === "function"
+        ? `Drop the .pbix, .pbit or PBIP folder, or <button id="addReport2">add a report</button>.`
+        : "Build the page with <code>--report</code>."}</div>`;
+    if ($("addReport2")) $("addReport2").onclick = () => window.onLineageAddReport();
+    return;
+  }
+  const all = usageRows();
+  const counts = Object.fromEntries(USAGE_ORDER.map(s => [s, all.filter(n => n.usage.status === s).length]));
+  const unusedCount = counts.unused + counts.deadChain;
+  const filter = state.usageFilter;
+  const shown = all.filter(n => filter === "all" ? true
+      : filter === "unusedAll" ? isUnused(n) : n.usage.status === filter)
+    .sort((a, b) => USAGE_ORDER.indexOf(a.usage.status) - USAGE_ORDER.indexOf(b.usage.status) ||
+      a.kind.localeCompare(b.kind) * -1 || (a.table || "").localeCompare(b.table || "") || a.name.localeCompare(b.name));
+
+  const chip = (key, label, n) => `<button class="chip${filter === key ? " on" : ""}" data-filter="${key}">${esc(label)} <b>${n}</b></button>`;
+  const kindChip = (key, label) => `<button class="chip${state.usageKind === key ? " on" : ""}" data-kind="${key}">${esc(label)}</button>`;
+
+  const whereText = n => {
+    const u = n.usage;
+    const direct = u.visuals.map(id => {
+      const v = NODES.get(id);
+      const roles = edgeRoles(id, n.id).join(", ");
+      return `<span class="where"><span class="pg">${esc(v.page)}</span> › ${esc(v.title || v.name)}${roles ? ` <small>${esc(roles)}</small>` : ""}</span>`;
+    });
+    const via = u.via.map(({ visual, through }) => {
+      const v = NODES.get(visual);
+      return `<span class="where via"><span class="pg">${esc(v.page)}</span> › ${esc(v.title || v.name)} <small>via ${esc(NODES.get(through).name)}</small></span>`;
+    });
+    const structural = u.structural.map(s => `<span class="where">${esc(s)}</span>`);
+    const list = direct.concat(via, structural);
+    if (!list.length) {
+      const readers = (IN.get(n.id) || []).filter(id => NODES.get(id).kind !== "visual");
+      return readers.length
+        ? `<span class="muted">read only by unused: ${readers.map(id => esc(NODES.get(id).name)).join(", ")}</span>`
+        : `<span class="muted">nothing reads it</span>`;
+    }
+    const more = list.length > 4 ? ` <span class="muted">+${list.length - 4} more</span>` : "";
+    return list.slice(0, 4).join("") + more;
+  };
+
+  const rows = shown.map(n => {
+    const u = n.usage, st = USAGE[u.status];
+    const readBy = (IN.get(n.id) || []).filter(id => NODES.get(id).kind !== "visual").length;
+    return `<tr data-id="${esc(n.id)}" class="${state.selected === n.id ? "sel" : ""}">
+      <td class="nm"><span class="dot" style="background:${KIND_COLOR[n.kind]}"></span>${esc(n.kind === "column" ? n.label : n.name)}
+        ${n.isHidden ? `<span class="tag">hidden</span>` : ""}</td>
+      <td>${esc(n.kind === "measure" ? n.table : "")}</td>
+      <td><span class="badge usage ${st.cls}"><span aria-hidden="true">${st.icon}</span> ${esc(st.label)}</span></td>
+      <td class="num">${u.visuals.length || ""}</td>
+      <td class="num">${u.via.length || ""}</td>
+      <td class="num">${readBy || ""}</td>
+      <td class="wherecell">${whereText(n)}</td>
+    </tr>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="usage-head">
+      <div>
+        <h2>Where used</h2>
+        <p>${unusedCount} of ${all.length} ${state.usageKind === "measure" ? "measures" : state.usageKind === "column" ? "columns" : "measures and columns"}
+          unused in ${esc(DATA.stats.report.reports.join(", "))}. Click a row for the full trace.</p>
+      </div>
+      <div class="usage-actions">
+        <button id="csvUnused2">Unused list (CSV)</button><button id="csvWhereUsed2">Where-used (CSV)</button>
+      </div>
+    </div>
+    <div class="chips filters">
+      ${chip("unusedAll", "Unused", unusedCount)}
+      ${chip("indirect", "Through measures", counts.indirect)}
+      ${chip("visual", "In visuals", counts.visual)}
+      ${chip("structural", "Keys and sort-by", counts.structural)}
+      ${chip("all", "All", all.length)}
+      <span class="sep"></span>
+      ${kindChip("measure", "Measures")}${kindChip("column", "Columns")}${kindChip("all", "Both")}
+    </div>
+    ${shown.length ? `<table class="usage">
+      <thead><tr><th>Name</th><th>Table</th><th>Status</th>
+        <th class="num" title="Visuals, slicers and filters that use it directly">Visuals</th>
+        <th class="num" title="Visuals that reach it through other measures">Via</th>
+        <th class="num" title="Measures and calculated columns that read it">Read by</th>
+        <th>Where</th></tr></thead>
+      <tbody>${rows}</tbody></table>`
+      : `<div class="empty">Nothing in this group${state.query ? " matches the search" : ""}.</div>`}
+    <p class="usage-note">"Unused" means unused in the loaded report${DATA.stats.report.reports.length > 1 ? "s" : ""}. Other reports on the same
+      semantic model, Excel, paginated reports and RLS rules are not seen: check before deleting.</p>`;
+
+  box.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => { state.usageFilter = b.dataset.filter; renderUsageTable(); });
+  box.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { state.usageKind = b.dataset.kind; renderUsageTable(); });
+  box.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => select(tr.dataset.id));
+  $("csvUnused2").onclick = exportUnused;
+  $("csvWhereUsed2").onclick = exportWhereUsed;
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  document.querySelectorAll(".viewtabs button").forEach(b => b.classList.toggle("on", b.dataset.view === mode));
+  const table = mode === "table";
+  $("usageTable").hidden = !table;
+  for (const id of ["svg", "hint"]) $(id).style.visibility = table ? "hidden" : "";
+  document.querySelector(".zoomer").style.visibility = table ? "hidden" : "";
+  document.querySelector(".legend").style.visibility = table ? "hidden" : "";
+  if (table) renderUsageTable();
+}
+
 /* ---------- detail panel ---------- */
 
 function nodeLink(id) {
@@ -769,6 +895,7 @@ function flash(message) {
 // Frame the traced chain: the node plus everything it reads and everything
 // that reads it, zoomed to fit but never past a readable size.
 function centreOn(id) {
+  if (state.mode === "table") return;
   const rect = $("svg").getBoundingClientRect();
   if (!rect.width || !state.positions.has(id)) return;
   const ids = [id, ...upstreamOf(id), ...downstreamOf(id)].filter(i => state.positions.has(i));
@@ -832,6 +959,7 @@ $("detail").addEventListener("click", event => {
 $("search").addEventListener("input", event => {
   state.query = event.target.value.trim();
   renderList();
+  if (state.mode === "table") renderUsageTable();
 });
 $("tableFilter").addEventListener("change", event => { state.table = event.target.value; render(); });
 $("sort").addEventListener("change", event => { state.sort = event.target.value; renderList(); });
@@ -878,6 +1006,7 @@ svg.addEventListener("wheel", event => {
   applyView();
 }, { passive: false });
 
+document.querySelectorAll(".viewtabs button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.view)));
 $("zoomIn").onclick = () => { state.view.k = Math.min(2.4, state.view.k * 1.25); applyView(); };
 $("zoomOut").onclick = () => { state.view.k = Math.max(0.12, state.view.k / 1.25); applyView(); };
 $("fit").onclick = fit;
@@ -911,6 +1040,8 @@ function mount(data, meta) {
   usageOption.disabled = !hasReport();
   usageOption.textContent = hasReport() ? "Group by usage (unused first)" : "Group by usage (needs the report)";
   if (!hasReport() && state.sort === "usage") { state.sort = "model"; $("sort").value = "model"; }
+  state.usageFilter = "unusedAll"; state.usageKind = "measure";
+  setMode(hasReport() ? state.mode : "graph");
   $("tableFilter").innerHTML = `<option value="">All tables</option>` +
     DATA.tables.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   renderHeader();

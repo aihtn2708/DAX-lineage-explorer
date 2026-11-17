@@ -3,7 +3,7 @@
   "private": true,
   "description": "Browser tests for the GitHub Pages demo in docs/",
   "scripts": {
-    "test": "node tests/js/parity.test.js && node tests/js/xlsx.test.js && node tests/js/report.test.js",
+    "test": "node tests/js/parity.test.js && node tests/js/xlsx.test.js && node tests/js/report.test.js && node tests/js/pbix.test.js",
     "serve": "python3 -m http.server 8000 --directory docs"
   },
   "devDependencies": {

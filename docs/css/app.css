@@ -276,3 +276,40 @@
   .usage-group .count { float: none; flex: none; }
   .badge.usage { white-space: nowrap; flex: none; }
   .link .dot { flex: none; align-self: flex-start; margin-top: 6px; }
+
+  /* ---------- usage list ---------- */
+  .viewtabs { position: absolute; left: 12px; top: 12px; z-index: 3; display: flex; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 9px; padding: 2px; box-shadow: var(--shadow); }
+  .viewtabs button { border: 0; border-radius: 7px; padding: 5px 12px; font-size: 13px; background: none; }
+  .viewtabs button.on { background: var(--measure); color: #fff; }
+  .usage-table { position: absolute; inset: 0; z-index: 2; overflow: auto; padding: 60px 22px 28px; background: var(--plane); }
+  .usage-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .usage-head h2 { margin: 0 0 4px; font-size: 17px; font-weight: 650; }
+  .usage-head p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+  .usage-actions { display: flex; gap: 6px; }
+  .usage-actions button { font-size: 12.5px; }
+  .chips.filters { margin: 14px 0 10px; gap: 6px; align-items: center; }
+  .chip { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; }
+  .chip b { font-weight: 600; margin-left: 3px; font-variant-numeric: tabular-nums; }
+  .chip.on { background: var(--measure); border-color: var(--measure); color: #fff; }
+  .chips .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+  table.usage { width: 100%; border-collapse: collapse; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; font-size: 13px; }
+  table.usage th { text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); padding: 9px 10px; border-bottom: 1px solid var(--border); position: sticky; top: -60px; background: var(--surface-1); }
+  table.usage td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.usage tbody tr { cursor: pointer; }
+  table.usage tbody tr:hover { background: var(--plane); }
+  table.usage tbody tr.sel { background: color-mix(in srgb, var(--measure) 12%, transparent); }
+  table.usage td.nm { white-space: nowrap; font-weight: 500; }
+  table.usage td.nm .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; }
+  table.usage .num, table.usage th.num { text-align: right; font-variant-numeric: tabular-nums; width: 56px; }
+  table.usage .badge { white-space: nowrap; }
+  .wherecell { min-width: 240px; }
+  .wherecell .where { display: block; line-height: 1.5; }
+  .wherecell .where.via { color: var(--text-secondary); }
+  .wherecell .pg { color: var(--text-secondary); }
+  .wherecell small { color: var(--muted); font-size: 11.5px; }
+  .muted { color: var(--muted); }
+  .usage-note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .usage-empty { margin-top: 30px; font-size: 14px; }

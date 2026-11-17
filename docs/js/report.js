@@ -81,7 +81,13 @@
     }
     const ref = fieldRef(value, scope);
     if (ref) { out.push(ref); return out; }
-    for (const v of Object.values(value)) collectRefs(v, scope, out);
+    for (const [k, v] of Object.entries(value)) {
+      // a selector pins formatting to one data point (a colour for one
+      // category value); it names a field but does not use it, and Power BI
+      // keeps stale ones after a column is renamed or removed
+      if (k === "selector") continue;
+      collectRefs(v, scope, out);
+    }
     return out;
   }
 
@@ -285,7 +291,19 @@
       const zip = await Z().open(blob);
       const result = await fromPaths(zip.names, p => zip.text(p), stem(name));
       if (/\.pbix$/.test(lower) && !result.model) {
-        result.note = `${name}: its model is stored in a binary format a browser cannot read, so add the INFO.MEASURES export (or save the file as .pbit).`;
+        const PM = root.PbixModel || (typeof require === "function" ? require("./pbixmodel.js") : null);
+        if (!zip.has("DataModel")) {
+          result.note = `${name} has no model of its own: it is a thin report on a published semantic model. Add the INFO.MEASURES export from that model.`;
+        } else {
+          try {
+            const model = PM.read(await zip.bytes("DataModel"), stem(name));
+            result.model = model.sources;
+            result.modelInfo = model.counts;
+            result.found.push(`${stem(name)} (model from the .pbix: ${model.counts.measures} measures, ${model.counts.columns} columns)`);
+          } catch (err) {
+            result.note = `${name}: its model could not be read (${err.message}). Add the INFO.MEASURES export, or save the file as .pbit.`;
+          }
+        }
       }
       return result;
     }

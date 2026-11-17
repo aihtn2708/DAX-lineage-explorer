@@ -39,6 +39,11 @@ Give the tool both and every measure and column gets a status:
 | **Read only by unused** | only measures that are themselves unused read it: the whole chain can go |
 | **Unused** | nothing in the model or the report reads it |
 
+**Usage list** (the tab above the graph) shows it all as one table: every measure or column, its
+status, the visuals that use it with page and role, what it is reached through, and what reads it.
+Filter it to *Unused*, *Through measures*, *In visuals* or *Keys and sort-by*; click a row for the
+full trace.
+
 Clicking a measure lists the visuals that use it, page by page, with the role it plays in each
 (axis, values, legend, tooltip, filter, conditional formatting), and the visuals that reach it
 through other measures, naming the measure in between. Visuals appear in the graph as the last
@@ -50,8 +55,8 @@ Report formats it reads:
 
 | File | What it holds |
 |---|---|
-| `.pbix` | the report. Its model is in a binary format, so drop it **with** the INFO export. Only the report part of the file is read, in slices, however large the model |
-| `.pbit` (File → Export → Power BI template) | the report **and** the model as JSON: works on its own, no queries needed |
+| `.pbix` | the report **and** the model: works on its own. The model is decompressed in the browser (XPress9), and decoding stops once its definitions are read, so the data is never loaded |
+| `.pbit` (File → Export → Power BI template) | the report and the model as JSON: works on its own, and is smaller |
 | PBIP folder (or its zip) | `*.Report/definition/…/visual.json` (PBIR) or `*.Report/report.json`, plus `*.SemanticModel/model.bim` if the model is saved as TMSL |
 | report layout `.json` | the `Report/Layout` part on its own |
 
@@ -64,7 +69,7 @@ load every report that uses the model, and check before deleting.
 
 ```
 daxlin unused     -s model.xlsx --report "Sales.pbix" --report "Finance.pbix"
-daxlin unused     -s "Sales.pbit" --columns-too
+daxlin unused     -s "Sales.pbix" --columns-too       # a .pbix carries its model too
 daxlin where-used "Total Cost" -s "Sales.pbit"
 
 Total Cost  (measure on Measures)
@@ -220,7 +225,8 @@ not what the engine does with it.
 |---|---|
 | `dax_lineage/` | the Python package behind `daxlin` |
 | `dax_lineage/pbi_report.py` | reads Power BI reports: .pbix, .pbit, PBIP (PBIR and legacy), model.bim |
-| `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js` and `js/xlsx.js` (dependency-free readers), `js/viewer.js` |
+| `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
+| `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
 | `examples/` | the same samples as CSV, the shape the CLI tests read |
@@ -233,8 +239,9 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 62 Python tests
-npm install && npm test                     # JS parity with Python, the .xlsx and report readers
+python3 -m pytest tests -q                  # 64 Python tests
+npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
+DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/
 python3 scripts/make_report_samples.py      # rebuild docs/samples/sample_report*.json
 npm run serve                               # the site at http://localhost:8000
@@ -245,3 +252,8 @@ npm run serve                               # the site at http://localhost:8000
 a misspelled measure, a measure in the `Error` state — for exercising `check`.
 
 Licence: Apache-2.0.
+
+## Third-party code
+
+The XPress9 decoder is a port of Microsoft's MIT-licensed library; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
