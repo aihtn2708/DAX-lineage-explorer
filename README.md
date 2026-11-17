@@ -11,7 +11,32 @@ and the report file.
 
 ![Tracing Sales YoY % back to the columns it reads](docs/assets/screenshot-trace.png)
 
-Two ways to use it, same rules and same results:
+## Run it locally
+
+Your model never has to leave your machine. Pick one:
+
+```
+# 1. One file, no server, no network: download it from the site
+#    (Downloads card) or write it from the package, then open it from disk
+daxlin offline -o dax-lineage-explorer.html
+
+# 2. A local server, on 127.0.0.1 only
+pip install -e .
+daxlin serve                      # opens http://127.0.0.1:8765
+
+# 3. For a team, on your own infrastructure
+docker build -t dax-lineage-explorer .
+docker run --rm -p 127.0.0.1:8765:8765 dax-lineage-explorer
+```
+
+Every page carries a Content-Security-Policy under which the browser refuses
+any request to another host. The offline page makes exactly one request, for
+itself. [SECURITY.md](SECURITY.md) has the details and how to check them,
+including a script that audits every request the page makes in a real browser.
+
+## Two ways to use it
+
+Same rules and same results:
 
 - **In the browser** — export the query result to Excel and drop it on the
   [demo page](https://aihtn2708.github.io/DAX-lineage-explorer/). The file is read in your browser tab and
@@ -227,6 +252,8 @@ not what the engine does with it.
 | `dax_lineage/pbi_report.py` | reads Power BI reports: .pbix, .pbit, PBIP (PBIR and legacy), model.bim |
 | `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
 | `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
+| `dax_lineage/offline.py`, `serve.py` | the single-file offline page, and `daxlin serve` |
+| `docs/dax-lineage-explorer.html` | the offline page, built from docs/ by `scripts/build_offline.py` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
 | `examples/` | the same samples as CSV, the shape the CLI tests read |
@@ -239,12 +266,14 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 64 Python tests
+python3 -m pytest tests -q                  # 72 Python tests
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/
 python3 scripts/make_report_samples.py      # rebuild docs/samples/sample_report*.json
 npm run serve                               # the site at http://localhost:8000
+python3 scripts/build_offline.py            # rebuild the offline page after changing docs/
+node scripts/privacy_audit.js offline       # every request the page makes, in a real browser
 ```
 
 `examples/` holds a sales model in the shape a real export arrives in, and

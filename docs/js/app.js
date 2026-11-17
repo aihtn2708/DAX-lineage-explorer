@@ -202,6 +202,9 @@
     await run(sample.files.map(file => ({
       name: file.split("/").pop(),
       blob: async () => {
+        // the offline single-file page carries its samples inside it
+        const embedded = window.DAX_LINEAGE_EMBEDDED && window.DAX_LINEAGE_EMBEDDED[file];
+        if (embedded) return new Blob([Uint8Array.from(atob(embedded), c => c.charCodeAt(0))]);
         const res = await fetch(file);
         if (!res.ok) throw new Error(`could not fetch the sample (${res.status})`);
         return res.blob();

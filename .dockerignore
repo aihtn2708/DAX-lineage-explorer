@@ -1,0 +1,10 @@
+.git
+docs
+tests
+examples
+scripts
+node_modules
+**/__pycache__
+*.pbix
+*.pbit
+*.xlsx

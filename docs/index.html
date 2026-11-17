@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>DAX lineage explorer</title>
 <meta name="description" content="Upload the INFO.MEASURES() result of a Power BI model and its report to see the lineage of every DAX measure, where each one is used, and which are unused. Runs in your browser; nothing is uploaded.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='4' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='2' y='21' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='19' y='12.5' width='11' height='7' rx='3.5' fill='%232a78d6'/%3E%3Cpath d='M13 7.5C17 7.5 15 16 19 16M13 24.5C17 24.5 15 16 19 16' stroke='%23898781' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
@@ -42,7 +44,8 @@
         <button data-sample="sample">Try the sample model</button>
         <button data-sample="sample-problems">Try a model with problems</button>
       </div>
-      <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere.
+      <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere, and the page's
+        security policy blocks any request to another site. <a href="dax-lineage-explorer.html" download>Download it</a> to run offline.
         From a .pbix only the report layout and the model's definitions are read, never its data.</p>
       <input type="file" id="addReportFile" multiple accept=".pbix,.pbit,.zip,.json,.bim" hidden>
     </div>
@@ -95,6 +98,8 @@
           <small>a cycle, a missing measure, a typo, an Error state</small>
           <a href="samples/sample_report_with_problems.json" download>sample_report_with_problems.json</a>
           <small>a visual that uses a measure the model no longer has</small>
+          <a href="dax-lineage-explorer.html" download>dax-lineage-explorer.html</a>
+          <small>this whole page as one file, to run offline</small>
           <a href="queries/info_measures.dax" download>info_measures.dax</a>
           <a href="queries/info_tables.dax" download>info_tables.dax</a>
           <a href="queries/info_columns.dax" download>info_columns.dax</a>

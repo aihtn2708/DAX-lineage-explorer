@@ -21,7 +21,7 @@ daxlin = "dax_lineage.cli:main"
 packages = ["dax_lineage"]
 
 [tool.setuptools.package-data]
-dax_lineage = ["template.html"]
+dax_lineage = ["template.html", "web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

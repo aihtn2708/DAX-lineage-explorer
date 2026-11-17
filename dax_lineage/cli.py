@@ -8,6 +8,10 @@
     daxlin json   -o lineage.json
     daxlin dot    -o lineage.dot
 
+Run the explorer on this machine, with nothing sent anywhere:
+    daxlin serve                         # http://127.0.0.1:8765
+    daxlin offline -o explorer.html      # one file to open from disk, no server
+
 With the report, for where-used and unused measures:
     daxlin unused     -s model.xlsx --report "Sales.pbix"   # exits 1 if any are unused
     daxlin where-used "Total Sales" -s model.xlsx --report "Sales.pbix"
@@ -140,7 +144,7 @@ def main(argv=None) -> int:
         description="Read DAX lineage out of INFO.MEASURES() query output and draw it.",
     )
     parser.add_argument("command", choices=["build", "json", "dot", "mermaid", "deps", "used-by", "check", "list",
-                                            "unused", "where-used"])
+                                            "unused", "where-used", "serve", "offline"])
     parser.add_argument("target", nargs="?", help="measure or column name, for deps / used-by")
     parser.add_argument("-s", "--source", default="examples",
                         help="the INFO.MEASURES export, an .xlsx workbook with a sheet per INFO.* query, "
@@ -156,7 +160,20 @@ def main(argv=None) -> int:
     parser.add_argument("-o", "--out", help="output file; '-' for stdout")
     parser.add_argument("--title", default="DAX measure lineage", help="title for the HTML page")
     parser.add_argument("--depth", type=int, default=12, help="depth limit for deps / used-by")
+    parser.add_argument("--host", default="127.0.0.1", help="serve: address to listen on (default 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8765, help="serve: port (default 8765)")
+    parser.add_argument("--no-open", action="store_true", help="serve: do not open a browser")
+    parser.add_argument("--allow-host", action="append", default=[], metavar="NAME",
+                        help="serve: a host name the page may be reached under (behind a proxy or in Docker)")
     args = parser.parse_args(argv)
+
+    if args.command == "serve":
+        from .serve import serve
+        return serve(args.host, args.port, open_browser=not args.no_open, allow_hosts=args.allow_host)
+    if args.command == "offline":
+        from .offline import packaged
+        _write(packaged(), args.out or "dax-lineage-explorer.html", "dax-lineage-explorer.html")
+        return 0
 
     lineage, source_names = _load(args)
 
