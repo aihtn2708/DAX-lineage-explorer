@@ -31,6 +31,7 @@ from importlib import resources
 from urllib.parse import parse_qs, urlsplit
 
 from ..serve import LOOPBACK
+from . import check as standards_check
 from .diff import compare
 from .scan import scan_folders
 from .store import REVIEW_STATES, Store
@@ -204,6 +205,12 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 for row in rows:
                     row["changes"] = compare(store, row["id"])["counts"]
                 return HTTPStatus.OK, rows
+            if path == "/api/standards":
+                return HTTPStatus.OK, standards_check.standards(store)
+            if path == "/api/standards/owner":
+                return HTTPStatus.OK, standards_check.owner_findings(store, one("name"))
+            if path == "/api/rules/export":
+                return HTTPStatus.OK, standards_check.export_rules(store)
             match = re.fullmatch(r"/api/versions/(\d+)", path)
             if match:
                 against = one("against")
@@ -211,6 +218,8 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "against must be a version id")
                 review = compare(store, int(match.group(1)), int(against) if against else None)
                 review["comments"] = store.comments(int(match.group(1)))
+                review["standards"] = standards_check.compare_checks(
+                    store, int(match.group(1)), review["against"]["id"] if review["against"] else None)
                 review["versions"] = store.versions_of(review["version"]["model_id"])
                 return HTTPStatus.OK, review
             match = re.fullmatch(r"/api/(models|objects)/(\d+)", path)
@@ -218,6 +227,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 found = (store.model if match.group(1) == "models" else store.object)(int(match.group(2)))
                 if found is None:
                     raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                if match.group(1) == "models":
+                    found["check"] = standards_check.version_check(store, found["version_id"]) \
+                        if found["version_id"] else None
+                else:
+                    titles = {r["id"]: r["title"] for r in standards_check.rule_set(store)}
+                    found["findings"] = [dict(f, title=titles.get(f["rule_id"], f["rule_id"])) for f in
+                                         standards_check.findings_for(store, found["version_id"], found["object_key"])]
                 return HTTPStatus.OK, found
             raise ApiError(HTTPStatus.NOT_FOUND, "not found")
 
@@ -232,6 +248,28 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                                        str(body.get("note", "")), str(body.get("decision", "")),
                                        str(body.get("by", "")))
                 return HTTPStatus.OK, saved
+            if path == "/api/rules/reset":
+                self._body()
+                standards_check.reset_rules(store)
+                return HTTPStatus.OK, {"ok": True}
+            if path == "/api/rules/import":
+                body = self._body()
+                return HTTPStatus.OK, {"imported": standards_check.import_rules(store, body, str(body.get("by", "")))}
+            match = re.fullmatch(r"/api/rules/([a-z-]+)", path)
+            if match:
+                body = self._body()
+                params = body.get("params")
+                if params is not None and not isinstance(params, dict):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "params must be an object")
+                return HTTPStatus.OK, standards_check.set_rule(
+                    store, match.group(1), body.get("enabled"), body.get("severity"), params, str(body.get("by", "")))
+            if path == "/api/exceptions":
+                body = self._body()
+                model_id, key, rule_id = int(body["model_id"]), str(body["object_key"]), str(body["rule_id"])
+                if body.get("remove"):
+                    return HTTPStatus.OK, {"removed": standards_check.withdraw(store, model_id, key, rule_id)}
+                standards_check.accept(store, model_id, key, rule_id, str(body.get("reason", "")), str(body.get("by", "")))
+                return HTTPStatus.OK, {"ok": True}
             match = re.fullmatch(r"/api/versions/(\d+)/(comments|review)", path)
             if match:
                 body, version_id = self._body(), int(match.group(1))
@@ -270,6 +308,7 @@ def make_server(store: Store, host: str = "127.0.0.1", port: int = 8766, quiet: 
 def serve(store: Store, host: str = "127.0.0.1", port: int = 8766, open_browser: bool = True, quiet: bool = False,
           allow_hosts=(), read_only: bool = False, scan_every: int = 0) -> int:
     job = ScanJob(store)
+    standards_check.ensure_checked(store)  # versions scanned before the standards existed
     try:
         server = make_server(store, host, port, quiet, allow_hosts, read_only, job)
     except OSError as err:
