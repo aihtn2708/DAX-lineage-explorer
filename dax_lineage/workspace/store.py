@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DECISIONS = ("", "keep", "remove")
 REVIEW_STATES = ("pending", "approved", "changes_requested")
 
@@ -151,6 +151,46 @@ CREATE TABLE IF NOT EXISTS comment (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS comment_version_idx ON comment (version_id);
+CREATE TABLE IF NOT EXISTS rule_setting (
+    rule_id    TEXT PRIMARY KEY,
+    enabled    INTEGER NOT NULL,
+    severity   TEXT NOT NULL,
+    params     TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS rule_exception (
+    model_id   INTEGER NOT NULL REFERENCES model(id),
+    object_key TEXT NOT NULL,
+    rule_id    TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (model_id, object_key, rule_id)
+);
+CREATE TABLE IF NOT EXISTS version_check (
+    version_id INTEGER PRIMARY KEY REFERENCES model_version(id),
+    score      INTEGER NOT NULL,
+    errors     INTEGER NOT NULL DEFAULT 0,
+    warnings   INTEGER NOT NULL DEFAULT 0,
+    infos      INTEGER NOT NULL DEFAULT 0,
+    accepted   INTEGER NOT NULL DEFAULT 0,
+    rules      TEXT NOT NULL DEFAULT '{}',
+    rules_hash TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS finding (
+    version_id INTEGER NOT NULL REFERENCES model_version(id),
+    rule_id    TEXT NOT NULL,
+    severity   TEXT NOT NULL,
+    object_key TEXT NOT NULL,
+    node       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    accepted   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS finding_version_idx ON finding (version_id, rule_id);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
@@ -358,9 +398,11 @@ class Store:
                 "SELECT m.id, m.name, m.path, m.kind, m.owner, m.team, m.notes, m.missing, m.first_seen_at, "
                 "m.last_seen_at, v.id AS version_id, v.number AS version, v.status, v.note, v.file_modified_at, "
                 "v.scanned_at, v.measures, v.columns, v.tables, v.visuals, v.pages, v.unused_measures, "
-                "v.unused_columns, v.broken_refs, v.has_report, "
+                "v.unused_columns, v.broken_refs, v.has_report, c.score, c.errors AS rule_errors, "
+                "c.warnings AS rule_warnings, c.infos AS rule_infos, "
                 "(SELECT COUNT(*) FROM model_version x WHERE x.model_id = m.id) AS versions "
                 "FROM model m LEFT JOIN model_version v ON v.id = m.current_version_id "
+                "LEFT JOIN version_check c ON c.version_id = v.id "
                 "ORDER BY m.missing, fold(m.name)"))
 
     def model(self, model_id: int) -> Optional[dict]:
@@ -547,7 +589,7 @@ class Store:
         with self.connect() as con:
             objects = _rows(con.execute(
                 "SELECT node, object_key, kind, table_name, name, expression, description, display_folder, "
-                "format_string, data_type, is_hidden, state, in_model, usage_status, usage, id "
+                "format_string, data_type, is_hidden, state, error_message, depth, in_model, usage_status, usage, id "
                 "FROM object WHERE version_id = ?", (version_id,)))
             for o in objects:
                 o["usage"] = json.loads(o["usage"]) if o["usage"] else None
