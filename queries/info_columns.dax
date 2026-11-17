@@ -1,0 +1,26 @@
+// Step 3 of 3 — optional but recommended.
+// Two things come from this query:
+//   1. The column catalogue, which lets the tool decide whether a bare
+//      reference like [Amount] is a measure or an unqualified column.
+//   2. Calculated-column expressions, which are parsed for lineage too, so a
+//      measure -> calculated column -> base column chain stays connected.
+//
+// ExplicitName is set for columns that exist in the table; InferredName is set
+// for columns the engine named itself. The loader takes whichever is present.
+
+EVALUATE
+SELECTCOLUMNS (
+    INFO.COLUMNS (),
+    "ID",               [ID],
+    "TableID",          [TableID],
+    "ExplicitName",     [ExplicitName],
+    "InferredName",     [InferredName],
+    "Expression",       [Expression],
+    "Type",             [Type],
+    "DataType",         [ExplicitDataType],
+    "IsHidden",         [IsHidden],
+    "DisplayFolder",    [DisplayFolder],
+    "SortByColumnID",   [SortByColumnID],
+    "LineageTag",       [LineageTag]
+)
+ORDER BY [TableID]

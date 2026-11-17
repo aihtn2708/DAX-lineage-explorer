@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --plane: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --measure: #2a78d6;
+    --column: #eb6834;
+    --table: #1baf7a;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --ink-on-fill: #ffffff;
+    --shadow: 0 1px 2px rgba(11,11,11,.06), 0 8px 24px rgba(11,11,11,.06);
+    --radius: 10px;
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      --surface-1: #1a1a19;
+      --plane: #0d0d0d;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --measure: #3987e5;
+      --column: #d95926;
+      --table: #199e70;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-1: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --measure: #3987e5;
+    --column: #d95926;
+    --table: #199e70;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--plane); color: var(--text-primary);
+    font: 14px/1.5 var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--surface-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; flex-direction: column; margin-right: auto; }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .brand span { font-size: 12px; color: var(--text-secondary); }
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; }
+  .stat { display: flex; flex-direction: column; min-width: 58px; }
+  .stat b { font-size: 19px; font-weight: 600; line-height: 1.1; }
+  .stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat.alert b { color: var(--critical); }
+  button, select, input {
+    font: inherit; color: inherit; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px;
+  }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--axis); }
+  button.on { background: var(--measure); border-color: var(--measure); color: #fff; }
+  main { flex: 1; display: grid; grid-template-columns: 272px 1fr 0px; min-height: 0; transition: grid-template-columns .18s ease; }
+  main.detail-open { grid-template-columns: 272px 1fr 380px; }
+  aside, .detail {
+    background: var(--surface-1); min-height: 0; overflow: auto;
+    display: flex; flex-direction: column;
+  }
+  aside { border-right: 1px solid var(--border); }
+  .detail { border-left: 1px solid var(--border); }
+  main:not(.detail-open) .detail { display: none; }
+  .pad { padding: 12px 14px; }
+  .controls { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); }
+  .controls .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .controls input[type="search"], .controls select { width: 100%; }
+  .toggle { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; }
+  .toggle input { accent-color: var(--measure); }
+  .list { flex: 1; overflow: auto; }
+  .group { padding: 10px 14px 2px; font-size: 11px; text-transform: uppercase;
+           letter-spacing: .05em; color: var(--muted); position: sticky; top: 0; background: var(--surface-1); }
+  .item {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    padding: 6px 14px; border: 0; border-radius: 0; background: none; font-size: 13px;
+  }
+  .item:hover { background: var(--plane); }
+  .item.sel { background: color-mix(in srgb, var(--measure) 14%, transparent); }
+  .item .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .canvas-wrap { position: relative; min-width: 0; background: var(--plane); overflow: hidden; }
+  svg.canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  svg.canvas.panning { cursor: grabbing; }
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; display: flex; gap: 14px; flex-wrap: wrap;
+    padding: 8px 11px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); font-size: 12px;
+  }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .zoomer { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
+  .hint { position: absolute; left: 50%; transform: translateX(-50%); top: 12px;
+          font-size: 12px; color: var(--text-secondary); background: var(--surface-1);
+          border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; box-shadow: var(--shadow); }
+  .node rect, .node path.shape { stroke-width: 1.5px; }
+  .node text { font-size: 11.5px; paint-order: stroke; pointer-events: none; }
+  .node { cursor: pointer; }
+  .node.dim { opacity: .16; }
+  .edge { fill: none; stroke: var(--axis); stroke-width: 1.4px; }
+  .edge.dim { opacity: .07; }
+  .edge.up { stroke: var(--measure); stroke-width: 2px; }
+  .edge.down { stroke: var(--column); stroke-width: 2px; }
+  .edge.rel { stroke-dasharray: 4 3; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.6;
+    padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .badge.warn { border-color: var(--warning); color: var(--text-primary); }
+  .badge.crit { border-color: var(--critical); color: var(--critical); }
+  .detail h2 { margin: 0 0 2px; font-size: 16px; font-weight: 640; }
+  .detail .sub { color: var(--text-secondary); font-size: 12.5px; margin-bottom: 10px; }
+  .detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+               color: var(--muted); margin: 16px 0 6px; }
+  .detail p { margin: 0 0 8px; color: var(--text-secondary); }
+  pre.dax {
+    margin: 0; padding: 10px 12px; background: var(--plane); border: 1px solid var(--border);
+    border-radius: 8px; font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word;
+    max-height: 320px; overflow: auto;
+  }
+  .dax .kw { color: var(--measure); font-weight: 600; }
+  .dax .fn { color: var(--table); }
+  .dax .str { color: var(--column); }
+  .dax .cmt { color: var(--muted); font-style: italic; }
+  .dax .num { color: var(--text-primary); }
+  .dax .ref { border-bottom: 1px dashed currentColor; cursor: pointer; }
+  .dax .ref:hover { background: color-mix(in srgb, var(--measure) 18%, transparent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .link {
+    display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+    background: none; border: 0; padding: 4px 6px; border-radius: 6px; font-size: 13px;
+  }
+  .link:hover { background: var(--plane); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12.5px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); font-size: 13px; padding: 24px 14px; text-align: center; }
+  .issues { border-top: 1px solid var(--border); padding: 10px 14px; font-size: 12.5px; }
+  .issues b { color: var(--critical); }
+  @media (max-width: 860px) {
+    main, main.detail-open { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    aside { border-right: 0; border-bottom: 1px solid var(--border); max-height: 38vh; }
+    main.detail-open .canvas-wrap { display: none; }
+    main.detail-open .detail { grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>__TITLE__</h1>
+    <span id="subtitle"></span>
+  </div>
+  <div class="stats" id="stats"></div>
+  <button id="theme" title="Switch light / dark">Theme</button>
+</header>
+
+<main id="main">
+  <aside>
+    <div class="pad controls">
+      <input type="search" id="search" placeholder="Search measures and columns  ( / )" autocomplete="off">
+      <select id="tableFilter"><option value="">All tables</option></select>
+      <select id="sort">
+        <option value="folder">Group by display folder</option>
+        <option value="table">Group by table</option>
+        <option value="depth">Sort by chain depth</option>
+        <option value="used">Sort by times referenced</option>
+        <option value="name">Sort by name</option>
+      </select>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="showColumns" checked> Columns</label>
+        <label class="toggle"><input type="checkbox" id="showTables"> Tables</label>
+        <label class="toggle"><input type="checkbox" id="showHidden" checked> Hidden</label>
+        <label class="toggle"><input type="checkbox" id="showUnreferenced"> Unreferenced</label>
+      </div>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="focusOnly"> Focus: hide unrelated</label>
+      </div>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="issues" id="issues"></div>
+  </aside>
+
+  <div class="canvas-wrap">
+    <svg class="canvas" id="svg"><g id="viewport"><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div class="zoomer">
+      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="zoomOut" title="Zoom out">&minus;</button>
+      <button id="fit" title="Fit to window">Fit</button>
+    </div>
+    <div class="hint" id="hint">Click a node to trace what it reads and what reads it</div>
+    <div class="legend">
+      <span><i style="background:var(--measure)"></i>Measure</span>
+      <span><i style="background:var(--column)"></i>Column</span>
+      <span><i style="background:var(--table)"></i>Table</span>
+      <span><i style="background:var(--measure);opacity:.45"></i>Reads (upstream)</span>
+      <span><i style="background:var(--column);opacity:.45"></i>Read by (downstream)</span>
+    </div>
+  </div>
+
+  <div class="detail" id="detail"></div>
+</main>
+
+<script id="lineage-data" type="application/json">__LINEAGE_DATA__</script>
+<script>
+"use strict";
+
+const DATA = JSON.parse(document.getElementById("lineage-data").textContent);
+const NODES = new Map(DATA.nodes.map(n => [n.id, n]));
+const EDGES = DATA.edges;
+const OUT = new Map(), IN = new Map();
+for (const n of DATA.nodes) { OUT.set(n.id, []); IN.set(n.id, []); }
+for (const e of EDGES) {
+  if (OUT.has(e.source)) OUT.get(e.source).push(e.target);
+  if (IN.has(e.target)) IN.get(e.target).push(e.source);
+}
+const BY_LABEL = new Map();
+const BY_BARE = new Map();
+for (const n of DATA.nodes) {
+  BY_LABEL.set(n.label.toLowerCase(), n.id);
+  const bare = n.name.toLowerCase();
+  if (!BY_BARE.has(bare)) BY_BARE.set(bare, []);
+  BY_BARE.get(bare).push(n.id);
+}
+
+const KIND_COLOR = { measure: "var(--measure)", column: "var(--column)", table: "var(--table)" };
+const NODE_W = 182, NODE_H = 30, GAP_X = 96, GAP_Y = 13;
+
+const state = {
+  selected: null,
+  hover: null,
+  query: "",
+  table: "",
+  sort: "folder",
+  showColumns: true,
+  showTables: false,
+  showHidden: true,
+  showUnreferenced: false,
+  focusOnly: false,
+  view: { x: 40, y: 40, k: 1 },
+  positions: new Map(),
+  visible: new Set()
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function closure(id, map) {
+  const seen = new Set([id]), stack = [id], out = [];
+  while (stack.length) {
+    for (const next of map.get(stack.pop()) || []) {
+      if (!seen.has(next)) { seen.add(next); out.push(next); stack.push(next); }
+    }
+  }
+  return out;
+}
+const upstreamOf = id => closure(id, OUT);
+const downstreamOf = id => closure(id, IN);
+
+/* ---------- header ---------- */
+
+function renderHeader() {
+  const s = DATA.stats;
+  const issues = s.cycles.length + s.unresolvedReferences.length + s.missingObjects;
+  const tiles = [
+    ["Measures", s.measures], ["Columns", s.columns], ["Tables", s.tables],
+    ["Dependencies", s.edges], ["Deepest chain", s.maxDepth],
+    ["Issues", issues, issues > 0]
+  ];
+  $("stats").innerHTML = tiles.map(([label, value, alert]) =>
+    `<div class="stat${alert ? " alert" : ""}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  $("subtitle").textContent = DATA.meta.subtitle;
+
+  const bits = [];
+  if (s.cycles.length) bits.push(`<b>${s.cycles.length} circular dependency chain(s)</b>`);
+  if (s.missingObjects) bits.push(`<b>${s.missingObjects} reference(s) to objects not in the export</b>`);
+  if (s.unresolvedReferences.length)
+    bits.push(`${s.unresolvedReferences.length} unresolved name(s): ${s.unresolvedReferences.slice(0, 6).map(esc).join(", ")}`);
+  if (!bits.length) bits.push(`Every reference resolved. ${esc(s.baseMeasures.length)} base measure(s) read the model directly.`);
+  $("issues").innerHTML = bits.join("<br>");
+}
+
+/* ---------- sidebar list ---------- */
+
+function listNodes() {
+  const q = state.query.toLowerCase();
+  return DATA.nodes.filter(n => {
+    if (n.kind === "column" && !state.showColumns) return false;
+    if (n.kind === "table" && !state.showTables) return false;
+    if (n.isHidden && !state.showHidden) return false;
+    if (state.table && n.table !== state.table && n.name !== state.table) return false;
+    if (q && !(n.label.toLowerCase().includes(q) ||
+               (n.description || "").toLowerCase().includes(q) ||
+               (n.expression || "").toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
+function renderList() {
+  const nodes = listNodes();
+  const byMeasureFirst = (a, b) =>
+    (a.kind === b.kind ? 0 : a.kind === "measure" ? -1 : b.kind === "measure" ? 1 : 0);
+  let groups;
+  if (state.sort === "folder" || state.sort === "table") {
+    const key = n => state.sort === "folder"
+      ? (n.kind === "measure" ? (n.displayFolder || "No display folder") : (n.table || n.kind))
+      : (n.table || n.name);
+    const map = new Map();
+    for (const n of nodes) {
+      if (!map.has(key(n))) map.set(key(n), []);
+      map.get(key(n)).push(n);
+    }
+    groups = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([title, items]) => [title, items.sort((a, b) => byMeasureFirst(a, b) || a.name.localeCompare(b.name))]);
+  } else {
+    const score = {
+      depth: n => -n.depth,
+      used: n => -(IN.get(n.id) || []).length,
+      name: n => n.name.toLowerCase()
+    }[state.sort];
+    const sorted = [...nodes].sort((a, b) => {
+      const x = score(a), y = score(b);
+      return x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name);
+    });
+    groups = [[`${nodes.length} object${nodes.length === 1 ? "" : "s"}`, sorted]];
+  }
+
+  $("list").innerHTML = groups.map(([title, items]) => `
+    <div class="group">${esc(title)}</div>
+    ${items.map(n => {
+      const used = (IN.get(n.id) || []).length;
+      const meta = state.sort === "used" ? `${used}&times;` : (n.depth ? `d${n.depth}` : "");
+      return `<button class="item${state.selected === n.id ? " sel" : ""}" data-id="${esc(n.id)}" title="${esc(n.label)}">
+        <span class="dot" style="background:${KIND_COLOR[n.kind]}${n.exists ? "" : ";opacity:.4"}"></span>
+        <span class="nm">${esc(n.label)}</span>
+        <span class="meta">${meta}</span>
+      </button>`;
+    }).join("")}`).join("") || `<div class="empty">Nothing matches that search.</div>`;
+}
+
+/* ---------- graph layout ---------- */
+
+function visibleNodes() {
+  let ids = DATA.nodes.filter(n => {
+    if (n.kind === "column" && !state.showColumns) return false;
+    if (n.kind === "table" && !state.showTables) return false;
+    if (n.isHidden && !state.showHidden) return false;
+    if (!state.showUnreferenced && n.kind !== "measure" &&
+        !(IN.get(n.id) || []).length && !(OUT.get(n.id) || []).length) return false;
+    return true;
+  }).map(n => n.id);
+
+  if (state.focusOnly && state.selected) {
+    const keep = new Set([state.selected, ...upstreamOf(state.selected), ...downstreamOf(state.selected)]);
+    ids = ids.filter(id => keep.has(id));
+  } else if (state.table) {
+    const keep = new Set();
+    for (const n of DATA.nodes) {
+      if (n.table === state.table || n.name === state.table) {
+        keep.add(n.id);
+        for (const id of OUT.get(n.id) || []) keep.add(id);
+      }
+    }
+    ids = ids.filter(id => keep.has(id));
+  }
+  return new Set(ids);
+}
+
+function layout() {
+  const visible = visibleNodes();
+  state.visible = visible;
+  const layers = new Map();
+  for (const id of visible) {
+    const depth = NODES.get(id).depth;
+    if (!layers.has(depth)) layers.set(depth, []);
+    layers.get(depth).push(id);
+  }
+  const depths = [...layers.keys()].sort((a, b) => a - b);
+  for (const d of depths) {
+    layers.get(d).sort((a, b) => {
+      const x = NODES.get(a), y = NODES.get(b);
+      return (x.table || "").localeCompare(y.table || "") || x.name.localeCompare(y.name);
+    });
+  }
+
+  // barycentre sweeps: pull each node towards the average row of its neighbours
+  const index = new Map();
+  const reindex = () => {
+    index.clear();
+    for (const d of depths) layers.get(d).forEach((id, i) => index.set(id, i));
+  };
+  reindex();
+  for (let pass = 0; pass < 6; pass++) {
+    const order = pass % 2 ? [...depths].reverse() : depths;
+    for (const d of order) {
+      const ids = layers.get(d);
+      const bary = new Map(ids.map(id => {
+        const neighbours = [...(OUT.get(id) || []), ...(IN.get(id) || [])]
+          .filter(n => visible.has(n) && index.has(n));
+        const mean = neighbours.length
+          ? neighbours.reduce((sum, n) => sum + index.get(n), 0) / neighbours.length
+          : index.get(id);
+        return [id, mean];
+      }));
+      ids.sort((a, b) => bary.get(a) - bary.get(b) || index.get(a) - index.get(b));
+      reindex();
+    }
+  }
+
+  const tallest = Math.max(1, ...depths.map(d => layers.get(d).length));
+  const height = tallest * (NODE_H + GAP_Y);
+  const positions = new Map();
+  depths.forEach((d, column) => {
+    const ids = layers.get(d);
+    const offset = (height - ids.length * (NODE_H + GAP_Y)) / 2;
+    ids.forEach((id, row) => positions.set(id, {
+      x: column * (NODE_W + GAP_X),
+      y: offset + row * (NODE_H + GAP_Y)
+    }));
+  });
+  state.positions = positions;
+  state.extent = { w: depths.length * (NODE_W + GAP_X), h: height };
+}
+
+/* ---------- graph render ---------- */
+
+function truncate(text, max) {
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
+}
+
+function edgePath(a, b) {
+  // a = dependency (left), b = dependent (right)
+  const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2;
+  const x2 = b.x, y2 = b.y + NODE_H / 2;
+  const dx = Math.max(28, (x2 - x1) * 0.5);
+  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+}
+
+function render() {
+  layout();
+  const { positions, visible, selected } = state;
+  const up = selected ? new Set([selected, ...upstreamOf(selected)]) : null;
+  const down = selected ? new Set([selected, ...downstreamOf(selected)]) : null;
+  const related = selected ? new Set([...up, ...down]) : null;
+
+  const edgeSvg = [];
+  for (const e of EDGES) {
+    if (!visible.has(e.source) || !visible.has(e.target)) continue;
+    const a = positions.get(e.target), b = positions.get(e.source);
+    if (!a || !b) continue;
+    let cls = "edge";
+    let marker = "arrow";
+    if (selected) {
+      if (up.has(e.source) && up.has(e.target)) { cls += " up"; marker = "arrow-up"; }
+      else if (down.has(e.source) && down.has(e.target)) { cls += " down"; marker = "arrow-down"; }
+      else cls += " dim";
+    }
+    if (e.kind === "relationship") cls += " rel";
+    edgeSvg.push(`<path class="${cls}" d="${edgePath(a, b)}" marker-end="url(#${marker})"></path>`);
+  }
+  $("edges").innerHTML =
+    `<defs>
+       ${["arrow:var(--axis)", "arrow-up:var(--measure)", "arrow-down:var(--column)"].map(spec => {
+          const [id, fill] = spec.split(":");
+          return `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7"
+                    orient="auto-start-reverse"><path d="M0,1 L7,4 L0,7 z" fill="${fill}"></path></marker>`;
+       }).join("")}
+     </defs>` + edgeSvg.join("");
+
+  const nodeSvg = [];
+  for (const id of visible) {
+    const n = NODES.get(id), p = positions.get(id);
+    if (!p) continue;
+    const color = KIND_COLOR[n.kind];
+    const radius = n.kind === "measure" ? 9 : n.kind === "table" ? 15 : 3;
+    const dim = related && !related.has(id);
+    const isSel = id === selected;
+    const dash = !n.exists ? ' stroke-dasharray="4 3"' : n.isHidden ? ' stroke-dasharray="2 2"' : "";
+    const stroke = !n.exists ? "var(--critical)" : n.state === "Error" ? "var(--critical)" : color;
+    nodeSvg.push(`<g class="node${dim ? " dim" : ""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
+      <title>${esc(n.label)}${n.description ? " — " + esc(n.description) : ""}</title>
+      <rect width="${NODE_W}" height="${NODE_H}" rx="${radius}" ry="${radius}"
+            fill="color-mix(in srgb, ${color} ${isSel ? 26 : 12}%, var(--surface-1))"
+            stroke="${stroke}"${dash} stroke-width="${isSel ? 2.4 : 1.5}"></rect>
+      <text x="11" y="${NODE_H / 2 + 4}" fill="var(--text-primary)">${esc(truncate(n.label, 27))}</text>
+      ${n.depth ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
+            fill="var(--muted)" font-size="10">${n.depth}</text>` : ""}
+    </g>`);
+  }
+  $("nodes").innerHTML = nodeSvg.join("");
+  applyView();
+  renderList();
+  renderDetail();
+}
+
+function applyView() {
+  const { x, y, k } = state.view;
+  $("viewport").setAttribute("transform", `translate(${x},${y}) scale(${k})`);
+}
+
+function fit() {
+  const svg = $("svg").getBoundingClientRect();
+  if (!svg.width || !svg.height) { state.needsFit = true; return; }
+  state.needsFit = false;
+  const { w, h } = state.extent || { w: 1, h: 1 };
+  const k = Math.min(1.1, Math.max(0.18, Math.min((svg.width - 80) / Math.max(w, 1),
+                                                  (svg.height - 80) / Math.max(h, 1))));
+  state.view = { k, x: (svg.width - w * k) / 2, y: (svg.height - h * k) / 2 };
+  applyView();
+}
+
+/* ---------- DAX highlighting ---------- */
+
+const DAX_KEYWORDS = new Set(["var", "return", "define", "measure", "evaluate", "order", "by",
+  "start", "at", "asc", "desc", "in", "not", "and", "or", "true", "false"]);
+
+function resolveRef(name, owner) {
+  const bare = name.toLowerCase();
+  if (owner) {
+    const id = BY_LABEL.get(`${owner.toLowerCase()}[${bare}]`);
+    if (id) return id;
+  }
+  if (BY_LABEL.has(`[${bare}]`)) return BY_LABEL.get(`[${bare}]`);
+  const measure = "m:" + bare;
+  if (NODES.has(measure)) return measure;
+  const hits = (BY_BARE.get(bare) || []).filter(id => NODES.get(id).kind === "column");
+  return hits.length === 1 ? hits[0] : null;
+}
+
+function highlightDax(text) {
+  let out = "", i = 0, lastWord = null, lastOwner = null;
+  const n = text.length;
+  while (i < n) {
+    const rest = text.slice(i);
+    let match;
+    if ((match = rest.match(/^(\/\/|--)[^\n]*/)) || (match = rest.match(/^\/\*[\s\S]*?(\*\/|$)/))) {
+      out += `<span class="cmt">${esc(match[0])}</span>`; i += match[0].length; continue;
+    }
+    if (text[i] === '"') {
+      const m = rest.match(/^"(?:[^"]|"")*"?/);
+      out += `<span class="str">${esc(m[0])}</span>`; i += m[0].length; continue;
+    }
+    if (text[i] === "'") {
+      const m = rest.match(/^'(?:[^']|'')*'?/);
+      lastOwner = m[0].replace(/^'|'$/g, "").replace(/''/g, "'");
+      out += esc(m[0]); i += m[0].length; continue;
+    }
+    if (text[i] === "[") {
+      const m = rest.match(/^\[(?:[^\]]|\]\])*\]?/);
+      const name = m[0].replace(/^\[|\]$/g, "").replace(/\]\]/g, "]");
+      const target = resolveRef(name, lastOwner || lastWord);
+      out += target
+        ? `<span class="ref" data-goto="${esc(target)}">${esc(m[0])}</span>`
+        : esc(m[0]);
+      lastOwner = null; lastWord = null;
+      i += m[0].length; continue;
+    }
+    if ((match = rest.match(/^[A-Za-z_À-￿][A-Za-z0-9_.À-￿]*/))) {
+      const word = match[0];
+      const isFunction = /^\s*\(/.test(rest.slice(word.length));
+      if (DAX_KEYWORDS.has(word.toLowerCase())) { out += `<span class="kw">${esc(word)}</span>`; lastWord = null; }
+      else if (isFunction) { out += `<span class="fn">${esc(word)}</span>`; lastWord = null; }
+      else { out += esc(word); lastWord = word; }
+      lastOwner = null;
+      i += word.length; continue;
+    }
+    if ((match = rest.match(/^\d+(\.\d+)?/))) {
+      out += `<span class="num">${esc(match[0])}</span>`; i += match[0].length; continue;
+    }
+    if (!/\s/.test(text[i])) { lastWord = null; }
+    out += esc(text[i]); i += 1;
+  }
+  return out;
+}
+
+/* ---------- detail panel ---------- */
+
+function nodeLink(id) {
+  const n = NODES.get(id);
+  if (!n) return "";
+  return `<button class="link" data-id="${esc(id)}">
+    <span class="dot" style="width:8px;height:8px;border-radius:2px;background:${KIND_COLOR[n.kind]}"></span>
+    <span class="nm">${esc(n.label)}</span></button>`;
+}
+
+function renderDetail() {
+  const panel = $("detail");
+  $("main").classList.toggle("detail-open", !!state.selected);
+  if (!state.selected) { panel.innerHTML = ""; return; }
+  const n = NODES.get(state.selected);
+  const reads = (OUT.get(n.id) || []);
+  const readBy = (IN.get(n.id) || []);
+  const up = upstreamOf(n.id), down = downstreamOf(n.id);
+
+  const badges = [];
+  if (!n.exists) badges.push(`<span class="badge crit">not in export</span>`);
+  if (n.isHidden) badges.push(`<span class="badge">hidden</span>`);
+  if (n.isCalculated) badges.push(`<span class="badge">calculated column</span>`);
+  if (n.state && n.state !== "Ready") badges.push(`<span class="badge warn">${esc(n.state)}</span>`);
+  if (n.timeIntelligence.length) badges.push(`<span class="badge">time intelligence</span>`);
+  if (n.iterators.length) badges.push(`<span class="badge">iterator</span>`);
+  if (n.contextModifiers.length) badges.push(`<span class="badge">context modifier</span>`);
+  if (n.unresolved.length) badges.push(`<span class="badge warn">${n.unresolved.length} unresolved ref</span>`);
+
+  panel.innerHTML = `<div class="pad">
+    <h2>${esc(n.name)}</h2>
+    <div class="sub">${esc(n.kind)}${n.table ? " on " + esc(n.table) : ""}${
+      n.displayFolder ? " &middot; " + esc(n.displayFolder) : ""}</div>
+    ${badges.length ? `<div class="chips">${badges.join("")}</div>` : ""}
+    ${n.description ? `<h3>Description</h3><p>${esc(n.description)}</p>` : ""}
+    ${n.errorMessage ? `<h3>Error</h3><p style="color:var(--critical)">${esc(n.errorMessage)}</p>` : ""}
+
+    <h3>Lineage</h3>
+    <dl class="kv">
+      <dt>Chain depth</dt><dd>${n.depth}</dd>
+      <dt>Reads directly</dt><dd>${reads.length}</dd>
+      <dt>Reads in total</dt><dd>${up.length}</dd>
+      <dt>Read by directly</dt><dd>${readBy.length}</dd>
+      <dt>Read by in total</dt><dd>${down.length}</dd>
+      ${n.formatString ? `<dt>Format</dt><dd>${esc(n.formatString)}</dd>` : ""}
+      ${n.dataType ? `<dt>Data type</dt><dd>${esc(n.dataType)}</dd>` : ""}
+    </dl>
+
+    ${n.expression ? `<h3>DAX</h3><pre class="dax">${highlightDax(n.expression)}</pre>` : ""}
+
+    ${reads.length ? `<h3>Reads (${reads.length})</h3>${reads.map(nodeLink).join("")}` : ""}
+    ${readBy.length ? `<h3>Read by (${readBy.length})</h3>${readBy.map(nodeLink).join("")}` : ""}
+    ${n.functions.length ? `<h3>Functions</h3><div class="chips">${
+      n.functions.map(f => `<span class="badge">${esc(f)}</span>`).join("")}</div>` : ""}
+    ${n.variables.length ? `<h3>Variables</h3><div class="chips">${
+      n.variables.map(v => `<span class="badge">${esc(v)}</span>`).join("")}</div>` : ""}
+
+    <h3>Export</h3>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap">
+      <button id="copyMermaid">Copy subgraph as Mermaid</button>
+      <button id="clearSel">Clear selection</button>
+    </div>
+  </div>`;
+
+  $("copyMermaid").onclick = () => copyMermaid(n.id);
+  $("clearSel").onclick = () => select(null);
+}
+
+function copyMermaid(id) {
+  const keep = new Set([id, ...upstreamOf(id), ...downstreamOf(id)]);
+  const safe = key => "n" + [...keep].indexOf(key);
+  const lines = ["graph LR"];
+  for (const key of keep) {
+    const n = NODES.get(key);
+    const open = n.kind === "measure" ? "([" : n.kind === "table" ? "[(" : "[";
+    const close = n.kind === "measure" ? "])" : n.kind === "table" ? ")]" : "]";
+    lines.push(`  ${safe(key)}${open}"${n.label.replace(/"/g, "'")}"${close}`);
+  }
+  for (const e of EDGES) {
+    if (keep.has(e.source) && keep.has(e.target)) lines.push(`  ${safe(e.target)} --> ${safe(e.source)}`);
+  }
+  const text = lines.join("\n");
+  navigator.clipboard?.writeText(text).then(
+    () => flash("Mermaid copied to the clipboard"),
+    () => flash("Copy failed; the browser blocked clipboard access")
+  );
+}
+
+let flashTimer = null;
+function flash(message) {
+  const hint = $("hint");
+  hint.textContent = message;
+  hint.style.opacity = "1";
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    hint.textContent = "Click a node to trace what it reads and what reads it";
+  }, 2600);
+}
+
+/* ---------- interaction ---------- */
+
+// Frame the traced chain: the node plus everything it reads and everything
+// that reads it, zoomed to fit but never past a readable size.
+function centreOn(id) {
+  const rect = $("svg").getBoundingClientRect();
+  if (!rect.width || !state.positions.has(id)) return;
+  const ids = [id, ...upstreamOf(id), ...downstreamOf(id)].filter(i => state.positions.has(i));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const i of ids) {
+    const p = state.positions.get(i);
+    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x + NODE_W); y1 = Math.max(y1, p.y + NODE_H);
+  }
+  const pad = 60;
+  const k = Math.max(0.12, Math.min(1.15, (rect.width - pad * 2) / (x1 - x0), (rect.height - pad * 2) / (y1 - y0)));
+  state.view = { k, x: rect.width / 2 - ((x0 + x1) / 2) * k, y: rect.height / 2 - ((y0 + y1) / 2) * k };
+  applyView();
+}
+
+function select(id) {
+  state.selected = id && NODES.has(id) ? id : null;
+  render();
+  if (state.selected) {
+    centreOn(state.selected);
+    const item = document.querySelector(`.item[data-id="${CSS.escape(state.selected)}"]`);
+    if (item && typeof item.scrollIntoView === "function") item.scrollIntoView({ block: "nearest" });
+  }
+}
+
+$("list").addEventListener("click", event => {
+  const item = event.target.closest(".item");
+  if (item) select(item.dataset.id);
+});
+$("nodes").addEventListener("click", event => {
+  const node = event.target.closest(".node");
+  if (node) select(node.dataset.id);
+});
+$("detail").addEventListener("click", event => {
+  const link = event.target.closest("[data-id], [data-goto]");
+  if (link) select(link.dataset.id || link.dataset.goto);
+});
+
+$("search").addEventListener("input", event => {
+  state.query = event.target.value.trim();
+  renderList();
+});
+$("tableFilter").addEventListener("change", event => { state.table = event.target.value; render(); });
+$("sort").addEventListener("change", event => { state.sort = event.target.value; renderList(); });
+for (const key of ["showColumns", "showTables", "showHidden", "showUnreferenced", "focusOnly"]) {
+  $(key).addEventListener("change", event => { state[key] = event.target.checked; render(); });
+}
+
+$("theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const prefersDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const isDark = root.dataset.theme === "dark" ||
+    (root.dataset.theme !== "light" && prefersDark);
+  root.dataset.theme = isDark ? "light" : "dark";
+});
+
+const svg = $("svg");
+let drag = null;
+svg.addEventListener("pointerdown", event => {
+  if (event.target.closest(".node")) return;
+  drag = { x: event.clientX, y: event.clientY, vx: state.view.x, vy: state.view.y };
+  svg.classList.add("panning");
+  svg.setPointerCapture(event.pointerId);
+});
+svg.addEventListener("pointermove", event => {
+  if (!drag) return;
+  state.view.x = drag.vx + (event.clientX - drag.x);
+  state.view.y = drag.vy + (event.clientY - drag.y);
+  applyView();
+});
+svg.addEventListener("pointerup", event => {
+  drag = null; svg.classList.remove("panning");
+  try { svg.releasePointerCapture(event.pointerId); } catch (_) {}
+});
+svg.addEventListener("wheel", event => {
+  event.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const px = event.clientX - rect.left, py = event.clientY - rect.top;
+  const factor = Math.exp(-event.deltaY * 0.0014);
+  const k = Math.min(2.4, Math.max(0.12, state.view.k * factor));
+  const ratio = k / state.view.k;
+  state.view.x = px - (px - state.view.x) * ratio;
+  state.view.y = py - (py - state.view.y) * ratio;
+  state.view.k = k;
+  applyView();
+}, { passive: false });
+
+$("zoomIn").onclick = () => { state.view.k = Math.min(2.4, state.view.k * 1.25); applyView(); };
+$("zoomOut").onclick = () => { state.view.k = Math.max(0.12, state.view.k / 1.25); applyView(); };
+$("fit").onclick = fit;
+
+addEventListener("keydown", event => {
+  if (event.key === "/" && document.activeElement !== $("search")) {
+    event.preventDefault(); $("search").focus(); $("search").select();
+  } else if (event.key === "Escape") {
+    if (document.activeElement === $("search")) { $("search").value = ""; state.query = ""; renderList(); }
+    else select(null);
+  } else if (event.key === "f" && !event.metaKey && !event.ctrlKey &&
+             document.activeElement !== $("search")) { fit(); }
+});
+
+/* ---------- boot ---------- */
+
+$("tableFilter").innerHTML = `<option value="">All tables</option>` +
+  DATA.tables.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+renderHeader();
+render();
+fit();
+addEventListener("resize", () => { state.needsFit ? fit() : applyView(); });
+requestAnimationFrame(() => { if (state.needsFit) fit(); });
+</script>
+</body>
+</html>

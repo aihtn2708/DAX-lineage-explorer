@@ -1,0 +1,14 @@
+// Step 2 of 3 — optional but recommended.
+// Resolves the TableID on each measure into a table name, so the graph can
+// group measures by their home table.
+
+EVALUATE
+SELECTCOLUMNS (
+    INFO.TABLES (),
+    "ID",          [ID],
+    "Name",        [Name],
+    "Description", [Description],
+    "IsHidden",    [IsHidden],
+    "LineageTag",  [LineageTag]
+)
+ORDER BY [Name]

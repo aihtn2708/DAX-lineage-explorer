@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAX lineage explorer</title>
+<meta name="description" content="Upload the INFO.MEASURES() result of a Power BI or Analysis Services model as Excel or CSV and see the lineage of every DAX measure. Runs in your browser; nothing is uploaded.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='4' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='2' y='21' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='19' y='12.5' width='11' height='7' rx='3.5' fill='%232a78d6'/%3E%3Cpath d='M13 7.5C17 7.5 15 16 19 16M13 24.5C17 24.5 15 16 19 16' stroke='%23898781' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1 id="title">DAX lineage explorer</h1>
+    <span id="subtitle">See what every measure reads, and what reads it</span>
+  </div>
+  <div class="stats" id="stats" hidden></div>
+  <div class="actions">
+    <button id="openAnother" hidden>Open another file</button>
+    <a class="button" href="samples/info_sample.xlsx" download>Download sample .xlsx</a>
+    <a class="button" href="https://github.com/aihtn2708/dax-lineage-explorer" rel="noopener">GitHub</a>
+    <button id="theme" title="Switch light / dark">Theme</button>
+  </div>
+</header>
+
+<section id="landing">
+  <div class="landing-inner">
+    <div class="lede">
+      <h2>Lineage for every DAX measure in a model, from one query.</h2>
+      <p>Run <code>EVALUATE INFO.MEASURES()</code> against a Power BI, Fabric or Analysis Services model,
+        export the result to Excel, and drop it here. You get a graph of what each measure reads,
+        what reads it, and the DAX behind it.</p>
+    </div>
+
+    <div class="drop" id="drop">
+      <h3>Drop your export here</h3>
+      <p><code>.xlsx</code>, <code>.csv</code>, <code>.tsv</code> or <code>.json</code>. Several files at once,
+        or one workbook with a sheet per query.</p>
+      <div class="row">
+        <label class="button primary">Choose files<input type="file" id="files" multiple accept=".xlsx,.xlsm,.csv,.tsv,.txt,.json" hidden></label>
+        <button data-sample="sample">Try the sample model</button>
+        <button data-sample="sample-problems">Try a model with problems</button>
+      </div>
+      <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere.</p>
+    </div>
+    <div class="error" id="error" hidden></div>
+
+    <details class="paste">
+      <summary>Or paste the result grid (copy table from DAX query view)</summary>
+      <textarea id="pasteBox" spellcheck="false" placeholder="Name&#9;Expression&#10;Total Sales&#9;SUM ( Sales[Amount] )&#10;Sales PY&#9;CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) )"></textarea>
+      <div class="row"><button class="primary" id="pasteGo">Show lineage</button><span>Tab- or comma-separated, header row first.</span></div>
+    </details>
+
+    <div class="cards">
+      <div class="card">
+        <h4>1 · Run the queries</h4>
+        <ol>
+          <li><b>Power BI Desktop</b>: DAX query view</li>
+          <li><b>Fabric</b>: the semantic model's DAX query editor</li>
+          <li><b>DAX Studio</b>, SSMS or Tabular Editor on an XMLA endpoint</li>
+        </ol>
+        <p style="margin-top:10px">Only <code>INFO.MEASURES()</code> is required. Add <code>INFO.COLUMNS()</code> so a bare
+          <code>[Amount]</code> can be told apart from a missing measure.</p>
+      </div>
+      <div class="card">
+        <h4>2 · Export to Excel</h4>
+        <ul>
+          <li>Paste each result into its own sheet, named <code>INFO.MEASURES</code>, <code>INFO.TABLES</code>,
+            <code>INFO.COLUMNS</code></li>
+          <li>Or save each as CSV and drop them together</li>
+          <li>Sheet names are optional; the columns give each one away</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Downloads</h4>
+        <div class="downloads">
+          <a href="samples/info_sample.xlsx" download>info_sample.xlsx</a>
+          <small>24 measures, 4 sheets: the shape to copy</small>
+          <a href="samples/info_sample_with_problems.xlsx" download>info_sample_with_problems.xlsx</a>
+          <small>a cycle, a missing measure, a typo, an Error state</small>
+          <a href="queries/info_measures.dax" download>info_measures.dax</a>
+          <a href="queries/info_tables.dax" download>info_tables.dax</a>
+          <a href="queries/info_columns.dax" download>info_columns.dax</a>
+          <a href="queries/info_relationships.dax" download>info_relationships.dax</a>
+        </div>
+      </div>
+    </div>
+
+    <footer class="site">
+      Open source, Apache-2.0 · <a href="https://github.com/aihtn2708/dax-lineage-explorer" rel="noopener">source and the <code>daxlin</code> command line</a>
+    </footer>
+  </div>
+</section>
+
+<main id="app" hidden>
+  <aside>
+    <div class="pad controls">
+      <input type="search" id="search" placeholder="Search measures and columns  ( / )" autocomplete="off">
+      <select id="tableFilter"><option value="">All tables</option></select>
+      <select id="sort">
+        <option value="folder">Group by display folder</option>
+        <option value="table">Group by table</option>
+        <option value="depth">Sort by chain depth</option>
+        <option value="used">Sort by times referenced</option>
+        <option value="name">Sort by name</option>
+      </select>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="showColumns" checked> Columns</label>
+        <label class="toggle"><input type="checkbox" id="showTables"> Tables</label>
+        <label class="toggle"><input type="checkbox" id="showHidden" checked> Hidden</label>
+        <label class="toggle"><input type="checkbox" id="showUnreferenced"> Unreferenced</label>
+      </div>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="focusOnly"> Focus: hide unrelated</label>
+      </div>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="issues" id="issues"></div>
+  </aside>
+
+  <div class="canvas-wrap">
+    <svg class="canvas" id="svg"><g id="viewport"><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div class="zoomer">
+      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="zoomOut" title="Zoom out">&minus;</button>
+      <button id="fit" title="Fit to window">Fit</button>
+    </div>
+    <div class="hint" id="hint">Click a node to trace what it reads and what reads it</div>
+    <div class="legend">
+      <span><i style="background:var(--measure)"></i>Measure</span>
+      <span><i style="background:var(--column)"></i>Column</span>
+      <span><i style="background:var(--table)"></i>Table</span>
+      <span><i style="background:var(--measure);opacity:.45"></i>Reads (upstream)</span>
+      <span><i style="background:var(--column);opacity:.45"></i>Read by (downstream)</span>
+    </div>
+  </div>
+
+  <div class="detail" id="detail"></div>
+</main>
+
+<script src="js/lineage.js"></script>
+<script src="js/xlsx.js"></script>
+<script src="js/viewer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

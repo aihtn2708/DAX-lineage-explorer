@@ -1,0 +1,38 @@
+// Step 1 of 3 — required.
+// Run in Power BI Desktop "DAX query view", in Fabric, or against any
+// Analysis Services / Power BI XMLA endpoint (DAX Studio, SSMS, Tabular Editor).
+// Export the result grid as CSV / TSV / JSON next to this file.
+//
+// INFO.MEASURES() is the DAX-native view of TMSCHEMA_MEASURES and returns:
+//   ID, TableID, Name, Description, DataType, Expression, FormatString,
+//   IsHidden, State, ModifiedTime, StructureModifiedTime, KPIID,
+//   IsSimpleMeasure, ErrorMessage, DisplayFolder, DetailRowsDefinitionID,
+//   DataCategory, LineageTag, SourceLineageTag
+//
+// The lineage tool only needs Name + Expression + TableID, but it will use
+// Description / DisplayFolder / FormatString / IsHidden / State / ErrorMessage
+// for the detail panel when they are present.
+
+EVALUATE
+SELECTCOLUMNS (
+    INFO.MEASURES (),
+    "ID",            [ID],
+    "TableID",       [TableID],
+    "Name",          [Name],
+    "Description",   [Description],
+    "Expression",    [Expression],
+    "FormatString",  [FormatString],
+    "DisplayFolder", [DisplayFolder],
+    "IsHidden",      [IsHidden],
+    "State",         [State],
+    "ErrorMessage",  [ErrorMessage],
+    "DataType",      [DataType],
+    "ModifiedTime",  [ModifiedTime],
+    "LineageTag",    [LineageTag]
+)
+ORDER BY [TableID], [Name]
+
+// If SELECTCOLUMNS over INFO.MEASURES is rejected by an older engine, use the
+// plain form instead and export every column:
+//
+// EVALUATE INFO.MEASURES()

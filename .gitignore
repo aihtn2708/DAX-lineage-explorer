@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+node_modules/
+lineage.html
+lineage.json
+lineage.dot
+.DS_Store

@@ -1,0 +1,7 @@
+ID,TableID,Name,Expression,DisplayFolder,IsHidden,State,ErrorMessage,Description,FormatString
+1,1,Revenue,SUM ( Sales[Amount] ),Core,False,Ready,,,
+2,1,Revenue Net,[Revenue] - [Refunds],Core,False,Ready,,Refunds is missing from this export.,
+3,1,Ratio A,"DIVIDE ( [Ratio B], [Revenue] )",Broken,False,Ready,,,
+4,1,Ratio B,"DIVIDE ( [Ratio A], [Revenue] )",Broken,False,Ready,,,
+5,1,Broken Measure,SUM ( Sales[DeletedColumn] ),Broken,False,Error,Column 'DeletedColumn' in table 'Sales' cannot be found.,,
+6,1,Typo Measure,[Revenu] * 2,Broken,False,Ready,,Misspelled reference.,

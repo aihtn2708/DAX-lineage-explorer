@@ -1,0 +1,6 @@
+ID,Name,Description,IsHidden,LineageTag
+1,Sales,"Order lines, one row per product per order.",False,lt-t1
+2,Date,"Marked date table, day grain.",False,lt-t2
+3,Product,Product dimension.,False,lt-t3
+4,Customer,Customer dimension.,False,lt-t4
+5,Measures,Measure-only table.,True,lt-t5

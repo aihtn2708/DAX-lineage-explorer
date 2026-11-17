@@ -1,0 +1,4 @@
+ID,TableID,ExplicitName,Expression,Type
+10,1,Amount,,Data
+11,1,Quantity,,Data
+12,1,OrderDate,,Data

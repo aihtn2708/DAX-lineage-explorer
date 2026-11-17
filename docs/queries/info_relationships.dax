@@ -1,0 +1,17 @@
+// Extra — optional.
+// Only used to draw the relationship edges between tables underneath the
+// measure graph, so you can see which fact table a measure actually reaches.
+
+EVALUATE
+SELECTCOLUMNS (
+    INFO.RELATIONSHIPS (),
+    "ID",                  [ID],
+    "FromTableID",         [FromTableID],
+    "FromColumnID",        [FromColumnID],
+    "ToTableID",           [ToTableID],
+    "ToColumnID",          [ToColumnID],
+    "IsActive",            [IsActive],
+    "CrossFilteringBehavior", [CrossFilteringBehavior],
+    "FromCardinality",     [FromCardinality],
+    "ToCardinality",       [ToCardinality]
+)

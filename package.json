@@ -1,0 +1,12 @@
+{
+  "name": "dax-lineage-explorer-web",
+  "private": true,
+  "description": "Browser tests for the GitHub Pages demo in docs/",
+  "scripts": {
+    "test": "node tests/js/parity.test.js && node tests/js/xlsx.test.js",
+    "serve": "python3 -m http.server 8000 --directory docs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
