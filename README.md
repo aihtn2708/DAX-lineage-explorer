@@ -148,6 +148,68 @@ daxlin workspace rules set column-description --on --severity warning
 
 ![Standards: scores per model, findings per owner, and the rule set](docs/assets/workspace-standards.png)
 
+### Safe changes: reviewed, made in Power BI Desktop, confirmed by the scan
+
+The workspace never writes a .pbix. A change is proposed and approved in the workspace, made in the model
+open in Power BI Desktop by a small companion on the External Tools ribbon, saved by the author as usual,
+and confirmed by the next scan.
+
+- **Propose** from the **Cleanup list** (remove what the team marked), a model's **Describe and organise**
+  grid (descriptions, display folders, format strings, hidden), or a measure's page (rename, remove).
+  Each edit is checked against the latest version first, and refused when it would break something:
+  a measure is removed only when nothing outside the change reads it and no visual shows it.
+  A rename rewrites every DAX expression that refers to the measure.
+- **Visuals find their fields by name**, and a rename made by a tool leaves them broken. So a measure
+  that visuals show is not renamed by the companion: the change asks the author to rename it in
+  Desktop's Data pane, which updates the visuals and the DAX, and the scan confirms it.
+- **Approve** (someone other than the author, by agreement), then in Desktop: **External Tools ›
+  Workspace changes**. The companion lists each edit with what it will do, changes nothing until you
+  type `APPLY`, saves a backup of the model's definition first, skips any edit whose object has changed
+  since the approval, and reports back. Check the model, save, and the next scan marks the change
+  **confirmed**.
+
+![An approved change, ready to apply in Desktop](docs/assets/workspace-change.png)
+
+**Installing the companion** on each Windows PC with Power BI Desktop (once, as administrator):
+
+```powershell
+python -m dax_lineage workspace companion --out C:\Tools\pbi-workspace     # or run-workspace.bat companion
+cd C:\Tools\pbi-workspace
+powershell -ExecutionPolicy Bypass -File .\install-companion.ps1 -Workspace http://127.0.0.1:8766 -DownloadTom
+```
+
+Restart Desktop; **Workspace changes** appears under External Tools. The companion needs Microsoft's
+Tabular Object Model library: `-DownloadTom` fetches it from nuget.org; without it the companion uses the
+one installed with Tabular Editor 2 or the SqlServer PowerShell module. Point `-Workspace` at the team
+server when there is one.
+
+### One workspace for the whole team
+
+A pilot runs on one PC with a SQLite file. A team runs one shared workspace on its own servers,
+set up as in [deploy/README.md](deploy/README.md):
+
+- **Postgres** for the database: `--db postgresql://workspace@db.contoso.local/powerbi`
+  (`pip install ".[postgres]"`). Everything works the same on either; the tests run on both.
+- **Sign-in**: Windows sign-in through IIS (`--auth iis`, nobody types a password), workspace
+  passwords (`--auth local`), or any proxy that signs people in (`--auth windows`). Without one,
+  the server refuses to listen beyond 127.0.0.1.
+- **Roles**: viewer, author, reviewer, admin. Names on notes, reviews and changes come from the
+  sign-in, and nobody approves their own change.
+- **Audit log** of every change, sign-in and refused attempt; the Admin page shows it with the
+  people and their roles.
+- **Backups**: `daxlin workspace backup --out file.jsonl.gz` writes one file that `restore` loads into
+  SQLite or Postgres, which is also how a pilot moves to the team server.
+- **The Desktop companion** signs in with the person's Windows account behind IIS, or with a
+  personal token from **My account**.
+
+```bash
+daxlin workspace --db pbi-workspace.db backup --out pilot.jsonl.gz                     # the pilot
+daxlin workspace --db postgresql://workspace@db/powerbi restore pilot.jsonl.gz          # the team server
+daxlin workspace --db postgresql://workspace@db/powerbi users add contoso\linh --role admin
+```
+
+![The Admin page: people, roles and the audit log](docs/assets/workspace-admin.png)
+
 **Run the scan every night** with Windows Task Scheduler (or cron on a server):
 
 ```bat
@@ -160,18 +222,18 @@ schtasks /create /tn "Power BI workspace scan" /sc daily /st 02:00 ^
 - The database is one SQLite file you choose with `--db` (default `pbi-workspace.db`, or `$DAXLIN_WORKSPACE_DB`).
 - The server listens on 127.0.0.1 and loads nothing from anywhere else; its page may call only itself.
 - Changes must be JSON POSTs from the page's own origin, so another website cannot send them.
-- There are no sign-ins yet. To share the workspace on your network, put it behind a proxy that signs people
-  in, or run `serve --read-only --host 0.0.0.0 --allow-host bi-workspace.corp`.
+- On a network, sign-in is required (`--auth iis`, `local` or `windows`), unless the server is `--read-only`.
 
 **Limits of this preview.**
 - *Unused* means unused by the report inside the same file. Reports built on the published model are scanned
   as *report only* and matched by name; check them before removing anything.
 - PBIP folders and models published to the service are not scanned yet.
+- The companion has not yet been run against Power BI Desktop by this project: try it on a copy of a .pbix
+  first. It makes measure-level edits only (remove, rename, description, folder, format string, hidden).
 - Who saved a version is not known from a synced folder, only when.
 - Relationships, calculation groups and report-level formatting are not compared yet.
 
-The design behind it, and the milestone that follows (applying cleanups, descriptions and renames
-through Power BI Desktop), are in the project's design document.
+The design behind it is in the project's design document; this completes its five milestones.
 
 ## Two ways to use it
 
@@ -392,7 +454,7 @@ not what the engine does with it.
 | `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
 | `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
 | `dax_lineage/offline.py`, `serve.py` | the single-file offline page, and `daxlin serve` |
-| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `diff.py` (what changed between versions), `rules.py` and `check.py` (the standards), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
+| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `diff.py` (what changed between versions), `rules.py` and `check.py` (the standards), `changes.py` and `companion/` (safe changes), `db.py`, `auth.py` and `backup.py` (the team server), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
 | `docs/dax-lineage-explorer.html` | the offline page, built from docs/ by `scripts/build_offline.py` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
@@ -406,7 +468,8 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 107 Python tests
+python3 -m pytest tests -q                  # 135 Python tests
+DAXLIN_TEST_POSTGRES=postgresql://postgres@localhost/ws_test python3 -m pytest tests -q   # the same on Postgres
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/

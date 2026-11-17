@@ -18,6 +18,7 @@ const STATUS_HELP = {
 };
 const view = document.getElementById("view");
 let summaryCache = null;
+let session = { mode: "none", signed_in: true, user: null };
 let lastScanLog = [];
 
 // -- helpers ----------------------------------------------------------------
@@ -44,6 +45,11 @@ async function api(path, body) {
   };
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && path !== "/api/login") {
+    session = { ...session, signed_in: false, user: null };
+    if (!location.hash.startsWith("#/signin")) location.hash = "#/signin";
+    throw new Error(data.error || "sign in first");
+  }
   if (!response.ok && response.status !== 409) throw new Error(data.error || response.statusText);
   return data;
 }
@@ -59,11 +65,30 @@ const badge = (status, text) => h("span", { class: `badge ${status}`, title: STA
 const kindTag = (kind) => h("span", { class: `kind ${kind}` }, kind);
 const objLink = (o) => (o.id ? h("a", { href: `#/object/${o.id}` }, fieldLabel(o)) : h("span", { class: "muted" }, fieldLabel(o)));
 const tile = (value, label, alert) => h("div", { class: `tile${alert ? " alert" : ""}` }, h("b", {}, n(value)), h("span", {}, label));
-const me = () => { try { return localStorage.getItem("workspace.me") || ""; } catch { return ""; } };
+const RANK = { viewer: 0, author: 1, reviewer: 2, admin: 3 };
+const can = (role) => !session.user || (RANK[session.user.role] ?? -1) >= RANK[role];
+const signedName = () => (session.mode !== "none" && session.user ? (session.user.display_name || session.user.username) : "");
+const me = () => { if (signedName()) return signedName(); try { return localStorage.getItem("workspace.me") || ""; } catch { return ""; } };
 const setMe = (name) => { try { localStorage.setItem("workspace.me", name); } catch { /* storage off */ } };
+
+function nameFields(root) {
+  // signed in: notes, reviews and changes carry the sign-in name, so no one types a name
+  if (!signedName()) return;
+  root.querySelectorAll("input[placeholder='your name']").forEach((input) => {
+    input.value = signedName();
+    (input.closest("label") || input).hidden = true;
+  });
+}
+
+function fill(el, ...nodes) {
+  el.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+  nameFields(el);
+  return el;
+}
 
 function show(...nodes) {
   view.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+  nameFields(view);
   window.scrollTo(0, 0);
 }
 
@@ -81,7 +106,7 @@ async function homeView() {
   summaryCache = summary;
   updateReviewNav();
   const run = summary.last_run;
-  const scanButton = h("button", { class: "primary", disabled: summary.read_only || summary.scan.running, onclick: startScan },
+  const scanButton = h("button", { class: "primary", disabled: summary.read_only || summary.scan.running || (session.user && session.user.role !== "admin"), onclick: startScan },
     summary.scan.running ? "Scanning…" : "Scan now");
   const live = models.filter((m) => !m.missing);
   show(
@@ -225,6 +250,8 @@ async function modelView(id, params) {
           findingsTable(m.check.findings, false)]
           : h("p", { class: "muted" }, "Not checked: no model was read from this file.")),
       h("div", {},
+        m.kind === "model" && m.status === "ok" ? h("div", { class: "bar" }, h("a", { href: `#/model/${m.id}/edit` }, "Describe and organise measures…"),
+          " · ", h("a", { href: `#/changes?status=all` }, "changes")) : null,
         h("h2", {}, "About this model"),
         h("div", { class: "panel form" },
           h("label", {}, "Owner", owner), h("label", {}, "Team", team), h("label", {}, "Notes", notes),
@@ -328,6 +355,7 @@ async function objectView(id) {
           a.updated_at ? h("div", { class: "muted small" }, `Last changed ${fmtDate(a.updated_at)}${a.updated_by ? ` by ${a.updated_by}` : ""}`) : null,
           h("div", { class: "muted small" }, "Notes follow this object through renames and new versions.")),
         o.is_current ? [h("h2", {}, "Standards"), findingsPanel(o, readOnly)] : null,
+        objectActions(o),
         h("h2", {}, "History"),
         h("ul", { class: "plain panel" }, changes.map((v) => h("li", {},
           h("a", { href: `#/object/${v.id}` }, `v${v.version}`), ` ${fmtDate(v.file_modified_at)}  `,
@@ -343,7 +371,7 @@ async function decisionsView(params) {
   const rows = await api(`/api/decisions?decision=${which}`);
   show(
     h("h1", {}, "Cleanup list"),
-    h("p", { class: "sub" }, "Everything the team has marked, across models. Removing happens in Power BI Desktop for now; milestone 4 applies it for you."),
+    h("p", { class: "sub" }, "Everything the team has marked, across models. Turn the removals into a change, have it approved, and the companion makes it in Power BI Desktop."),
     h("div", { class: "bar" },
       h("a", { href: "#/decisions?decision=remove" }, which === "remove" ? h("b", {}, "Marked to remove") : "Marked to remove"), " · ",
       h("a", { href: "#/decisions?decision=keep" }, which === "keep" ? h("b", {}, "Marked to keep") : "Marked to keep")),
@@ -355,6 +383,7 @@ async function decisionsView(params) {
       { label: "Note", cell: (r) => r.note },
       { label: "By", cell: (r) => [r.updated_by, h("div", { class: "muted small" }, fmtDate(r.updated_at))] },
     ], rows, which === "remove" ? "Nothing marked to remove yet. Open an unused measure and set its decision." : "Nothing marked to keep yet."),
+    which === "remove" ? cleanupProposals(rows) : null,
   );
 }
 
@@ -520,7 +549,7 @@ async function versionView(id, params) {
     h("div", { class: "grid2" },
       h("div", {}, left),
       h("div", {},
-        reviewable ? [h("h2", {}, "Review"),
+        reviewable && can("reviewer") ? [h("h2", {}, "Review"),
           h("div", { class: "panel form" },
             v.reviewer ? h("div", { class: "small" }, reviewBadge(v.review), `  by ${v.reviewer}, ${fmtDate(v.decided_at)}`) : null,
             h("label", {}, "Your name", by),
@@ -704,15 +733,382 @@ function standardsDelta(st) {
       !st.new.length && !st.fixed.length ? h("div", { class: "muted small" }, "No findings new or fixed.") : null)];
 }
 
+
+// -- milestone 4: safe changes --------------------------------------------------
+
+const CHANGE = { proposed: "waiting for approval", approved: "approved: apply in Desktop", rejected: "rejected",
+  cancelled: "cancelled", applied: "applied: save the file", confirmed: "confirmed", failed: "failed" };
+const OP_STATUS = { pending: "to do", applied: "done in Desktop", already: "already so", skipped: "skipped",
+  failed: "failed", manual: "for you, in Desktop", confirmed: "in the saved file" };
+const changeBadge = (state) => h("span", { class: `badge ${state}` }, CHANGE[state] || state);
+const FIELD_LABEL = { description: "description", display_folder: "display folder", format_string: "format string", is_hidden: "hidden" };
+
+function updateChangesNav() {
+  const link = document.getElementById("changesNav");
+  const count = summaryCache ? summaryCache.open_changes : 0;
+  link.replaceChildren("Changes", count ? h("span", { class: "count", title: `${count} open` }, count) : "");
+}
+
+function opText(o) {
+  const name = o.kind === "column" && o.table_name ? `${o.table_name}[${o.name}]` : o.name;
+  if (o.op === "remove") return ["Remove ", h("b", {}, name)];
+  if (o.op === "rename") return ["Rename ", h("b", {}, name), " to ", h("b", {}, o.new_value)];
+  if (o.op === "expression") return ["Update the DAX of ", h("b", {}, name), h("span", { class: "muted" }, ` (${o.reason})`)];
+  const show = (v) => (o.field === "is_hidden" ? (v === "true" ? "yes" : "no") : v || "(none)");
+  return ["Set ", FIELD_LABEL[o.field] || o.field, " of ", h("b", {}, name), ": ", h("span", { class: "was" }, show(o.old_value)), "  →  ", show(o.new_value)];
+}
+
+// preview a set of edits, show what blocks them, and propose them
+function proposePanel(modelId, items, title) {
+  const box = h("div", { class: "panel" }, h("p", { class: "muted small" }, "Checking…"));
+  const by = h("input", { value: me(), placeholder: "your name" });
+  const titleInput = h("input", { value: title || "", placeholder: "a title (optional)" });
+  (async () => {
+    let planned;
+    try {
+      planned = await api("/api/changes/preview", { model_id: modelId, items });
+    } catch (err) {
+      box.replaceChildren(h("p", { class: "err" }, err.message));
+      return;
+    }
+    const send = async () => {
+      setMe(by.value);
+      try {
+        const made = await api("/api/changes", { model_id: modelId, items, title: titleInput.value, by: by.value });
+        summaryCache = await api("/api/summary");
+        location.hash = `#/change/${made.id}`;
+      } catch (err) {
+        box.append(h("p", { class: "err" }, err.message));
+      }
+    };
+    const readOnly = summaryCache ? summaryCache.read_only : false;
+    fill(box,
+      planned.problems.length ? h("div", { class: "notice bad" }, h("b", {}, "Cannot be done as it is"),
+        h("ul", {}, planned.problems.map((p) => h("li", {}, p)))) : null,
+      planned.warnings.length ? h("div", { class: "notice" }, h("b", {}, "Check before approving"),
+        h("ul", {}, planned.warnings.map((w) => h("li", {}, w)))) : null,
+      planned.ops.length ? h("ol", { class: "steps" }, planned.ops.map((o) => h("li", {}, opText(o),
+        o.mode === "desktop" ? h("div", { class: "small muted" }, `For you, in Desktop: ${o.reason}`) : null))) : null,
+      !planned.problems.length ? h("div", { class: "form" }, h("label", {}, "Title", titleInput), h("label", {}, "Your name", by),
+        h("div", {}, h("button", { class: "primary", disabled: readOnly, onclick: send }, "Propose this change"))) : null,
+    );
+  })();
+  return box;
+}
+
+async function changesView(params) {
+  const status = params.get("status") || "open";
+  const rows = await api(`/api/changes?status=${encodeURIComponent(status)}`);
+  const tab = (value, text) => h("a", { href: `#/changes?status=${value}` }, status === value ? h("b", {}, text) : text);
+  show(
+    h("h1", {}, "Changes"),
+    h("p", { class: "sub" }, "Edits to a model, reviewed before anyone makes them, made in Power BI Desktop by the companion, and confirmed by the next scan."),
+    h("div", { class: "bar" }, tab("open", "Open"), " · ", tab("confirmed", "Confirmed"), " · ", tab("all", "All")),
+    table([
+      { label: "#", num: true, cell: (r) => r.id },
+      { label: "Change", cell: (r) => h("a", { href: `#/change/${r.id}` }, r.title) },
+      { label: "Model", cell: (r) => h("a", { href: `#/model/${r.model_id}` }, r.model_name) },
+      { label: "Edits", num: true, cell: (r) => [r.edits, r.manual ? h("span", { class: "muted small" }, ` (${r.manual} by hand)`) : null] },
+      { label: "Status", cell: (r) => changeBadge(r.status) },
+      { label: "Proposed", cell: (r) => [r.created_by, h("div", { class: "muted small" }, fmtDate(r.created_at))] },
+    ], rows, status === "open" ? "No open changes. Start one from the Cleanup list, a model's Edit descriptions, or a measure's page." : "None."),
+    h("h2", {}, "How a change is made"),
+    h("ol", { class: "steps" },
+      h("li", {}, "Someone proposes it; the workspace checks it against the model's latest version and refuses what would break something."),
+      h("li", {}, "Someone else approves it."),
+      h("li", {}, "The author opens the .pbix in Power BI Desktop and clicks External Tools › Workspace changes. The companion shows each edit and makes them when you type APPLY."),
+      h("li", {}, "The author checks the model and saves. The next scan confirms every edit is in the file.")),
+  );
+}
+
+async function changeView(id) {
+  const r = await api(`/api/changes/${id}`);
+  const readOnly = summaryCache ? summaryCache.read_only : false;
+  const by = h("input", { value: me(), placeholder: "your name" });
+  const note = h("textarea", { placeholder: "Optional note" });
+  const say = h("span", { class: "small" });
+  const post = async (path, body) => {
+    setMe(by.value);
+    try {
+      await api(path, { ...body, by: by.value });
+      summaryCache = await api("/api/summary");
+      updateChangesNav();
+      await changeView(id);
+    } catch (err) {
+      say.className = "err small";
+      say.textContent = err.message;
+    }
+  };
+  const decide = (status, text, cls) => h("button", { class: cls || "", disabled: readOnly, onclick: () => post(`/api/changes/${id}/decision`, { status, note: note.value }) }, text);
+  const expressionOps = r.ops.filter((o) => o.op === "expression");
+  const selfApproval = r.status === "proposed" && can("reviewer") && by.value && by.value.trim().toLowerCase() === (r.created_by || "").trim().toLowerCase();
+
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/changes" }, "Changes"), " › ", `#${r.id}`),
+    h("h1", {}, r.title, " ", changeBadge(r.status)),
+    h("p", { class: "sub" }, h("a", { href: `#/model/${r.model_id}` }, r.model_name), `  ·  against v${r.base_number}`,
+      r.current_number && r.current_number !== r.base_number ? `, the latest is v${r.current_number}` : "",
+      r.confirmed_number ? `  ·  confirmed in v${r.confirmed_number}` : ""),
+    h("div", { class: "grid2" },
+      h("div", {},
+        r.stale.length ? h("div", { class: "notice bad" }, h("b", {}, "The model changed since this was proposed"),
+          h("ul", {}, r.stale.map((x) => h("li", {}, x.why))), h("div", { class: "small" }, "Cancel it and propose it again from the latest version.")) : null,
+        r.warnings.length ? h("div", { class: "notice" }, h("b", {}, "Check before approving"), h("ul", {}, r.warnings.map((w) => h("li", {}, w)))) : null,
+        r.manual.length && ["approved", "applied"].includes(r.status) ? h("div", { class: "notice" }, h("b", {}, "To do by hand in Desktop's Data pane"),
+          h("ul", {}, r.manual.map((o) => h("li", {}, `Rename ${o.name} to ${o.new_value}`))),
+          h("div", { class: "small" }, "Visuals show these measures. A rename in Desktop updates the visuals and the DAX; one made by a tool would leave the visuals broken.")) : null,
+        r.status === "approved" ? h("div", { class: "notice good" }, h("b", {}, "Ready to apply"),
+          h("ol", { class: "steps" }, h("li", {}, `Open ${r.model_name}.pbix in Power BI Desktop.`),
+            h("li", {}, "External Tools › Workspace changes. Check the list, type APPLY."),
+            h("li", {}, "Check the model, then save. The next scan confirms it."))) : null,
+        h("h2", {}, `Edits (${r.ops.length})`),
+        table([
+          { label: "#", num: true, cell: (o) => o.seq },
+          { label: "Edit", cell: (o) => [opText(o), o.mode === "desktop" ? h("div", { class: "small muted" }, o.reason) : null, o.message && o.status !== "confirmed" ? h("div", { class: "small muted" }, o.message) : null] },
+          { label: "Status", cell: (o) => h("span", { class: `badge ${o.status === "pending" ? (o.mode === "desktop" ? "manual" : "proposed") : o.status}` },
+            o.status === "pending" && o.mode === "desktop" ? OP_STATUS.manual : OP_STATUS[o.status] || o.status) },
+        ], r.ops),
+        expressionOps.length ? [h("h2", {}, "DAX that follows the rename"), expressionOps.map((o) => h("div", { class: "change" },
+          h("div", { class: "change-head" }, h("b", {}, o.name)),
+          diffBlock({ lines: [...o.old_value.split("\n").map((t) => ({ op: "-", text: t })), ...o.new_value.split("\n").map((t) => ({ op: "+", text: t }))] })))] : null),
+      h("div", {},
+        h("h2", {}, "Decision"),
+        h("div", { class: "panel form" },
+          h("label", {}, "Your name", by),
+          h("label", {}, "Note", note),
+          selfApproval ? h("div", { class: "small muted" }, "You proposed this: ask someone else to approve it.") : null,
+          r.status === "proposed" && !can("reviewer") ? h("div", { class: "small muted" }, "A reviewer approves or rejects it.") : null,
+          h("div", { class: "buttons" },
+            r.status === "proposed" && can("reviewer") ? [decide("approved", "Approve", "good"), decide("rejected", "Reject", "bad")] : null,
+            ["proposed", "approved"].includes(r.status) ? decide("cancelled", "Cancel") : null,
+            ["approved", "rejected"].includes(r.status) ? decide("proposed", "Reopen") : null),
+          say),
+        h("h2", {}, "History"),
+        h("div", { class: "panel" }, h("div", { class: "thread" }, r.events.map((e) => h("div", { class: `msg ${e.kind}` },
+          h("div", { class: "who" }, e.kind === "comment" ? "" : [changeBadge(e.kind), " "], e.author || "someone", " · ", fmtDate(e.created_at)),
+          e.body ? h("p", {}, e.body) : null))),
+          (() => {
+            const area = h("textarea", { placeholder: "Comment" });
+            return h("div", { class: "form" }, area, h("div", {}, h("button", { disabled: readOnly, onclick: () => post(`/api/changes/${id}/comments`, { body: area.value }) }, "Comment")));
+          })()))),
+  );
+}
+
+async function editModelView(id, params) {
+  const m = await api(`/api/models/${id}`);
+  const details = m.objects.filter((o) => o.kind === "measure" && o.in_model);
+  const edits = new Map();
+  const only = params.get("only") || "";
+  const out = h("div");
+  const track = (o, field, input, original) => {
+    const read = () => (input.type === "checkbox" ? String(input.checked) : input.value.trim());
+    input.addEventListener(input.type === "checkbox" ? "change" : "input", () => {
+      const key = `${o.object_key}|${field}`;
+      if (read() === original) edits.delete(key); else edits.set(key, { op: "set", object_key: o.object_key, field, value: input.type === "checkbox" ? input.checked : input.value });
+      input.classList.toggle("changed", read() !== original);
+      count.textContent = edits.size ? `${edits.size} edit${edits.size === 1 ? "" : "s"}` : "";
+    });
+    return input;
+  };
+  const count = h("span", { class: "muted small" });
+  const visible = details.filter((d) => !only || (only === "description" ? !d.description : only === "format" ? !d.format_string : only === "folder" ? !d.display_folder : true));
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/" }, "Models"), " › ", h("a", { href: `#/model/${id}` }, m.name), " › edit"),
+    h("h1", {}, `Describe and organise: ${m.name}`),
+    h("p", { class: "sub" }, "Change any cell, then preview. Nothing changes in the model until the change is approved and applied in Desktop."),
+    h("div", { class: "bar" }, "Show: ",
+      [["", "every measure"], ["description", "no description"], ["format", "no format string"], ["folder", "no folder"]].map(([v, t], i) =>
+        [i ? " · " : "", h("a", { href: `#/model/${id}/edit${v ? `?only=${v}` : ""}` }, only === v ? h("b", {}, t) : t)])),
+    h("div", { class: "table-wrap" }, h("table", { class: "edit-grid" },
+      h("thead", {}, h("tr", {}, ["Measure", "Description", "Display folder", "Format string", "Hidden"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, visible.map((d) => h("tr", {},
+        h("td", {}, h("a", { href: `#/object/${d.id}` }, d.name), h("div", { class: "muted small" }, d.table_name)),
+        h("td", {}, track(d, "description", h("input", { value: d.description || "" }), (d.description || "").trim())),
+        h("td", {}, track(d, "display_folder", h("input", { value: d.display_folder || "" }), (d.display_folder || "").trim())),
+        h("td", {}, track(d, "format_string", h("input", { value: d.format_string || "", placeholder: "#,0.00" }), (d.format_string || "").trim())),
+        h("td", {}, track(d, "is_hidden", h("input", { type: "checkbox", checked: !!d.is_hidden }), String(!!d.is_hidden)))))))),
+    h("div", { class: "bar" }, h("button", { class: "primary", onclick: () => out.replaceChildren(proposePanel(Number(id), [...edits.values()], "")) }, "Preview the change"), count),
+    out,
+  );
+}
+
+function objectActions(o) {
+  if (o.kind !== "measure" || !o.in_model || !o.is_current) return null;
+  const out = h("div");
+  const newName = h("input", { placeholder: "new name", value: o.name });
+  return [h("h2", {}, "Change it"),
+    h("div", { class: "panel form" },
+      h("label", {}, "Rename to", newName),
+      h("div", { class: "buttons" },
+        h("button", { onclick: () => out.replaceChildren(proposePanel(o.model_id, [{ op: "rename", object_key: o.object_key, value: newName.value }], "")) }, "Preview rename"),
+        h("button", { class: "bad", onclick: () => out.replaceChildren(proposePanel(o.model_id, [{ op: "remove", object_key: o.object_key }], "")) }, "Preview removal")),
+      out)];
+}
+
+function cleanupProposals(rows) {
+  const byModel = new Map();
+  for (const r of rows) if (r.object_id && r.kind === "measure") {
+    if (!byModel.has(r.model_id)) byModel.set(r.model_id, { name: r.model_name, items: [] });
+    byModel.get(r.model_id).items.push({ op: "remove", object_key: r.object_key });
+  }
+  if (!byModel.size) return null;
+  const out = h("div");
+  return [h("h2", {}, "Turn it into changes"),
+    h("div", { class: "bar" }, [...byModel.entries()].map(([modelId, g]) =>
+      h("button", { onclick: () => out.replaceChildren(proposePanel(modelId, g.items, `Remove ${g.items.length} measure${g.items.length === 1 ? "" : "s"} marked for removal`)) },
+        `Remove ${g.items.length} from ${g.name}…`))),
+    out];
+}
+
+
+// -- milestone 5: sign-in, account, administration -------------------------------------
+
+const ROLE_TEXT = { viewer: "reads everything", author: "notes, comments, proposes and applies changes",
+  reviewer: "approves versions and changes, exceptions, rules", admin: "accounts, roles, scans, audit log" };
+
+function updateSessionNav() {
+  const account = document.getElementById("accountNav");
+  const admin = document.getElementById("adminNav");
+  const user = session.user;
+  account.hidden = !(session.mode !== "none" && user);
+  if (!account.hidden) account.replaceChildren(user.display_name || user.username, h("span", { class: "role" }, user.role));
+  admin.hidden = !(user && user.role === "admin");
+  const out = !session.signed_in;
+  document.querySelector("header nav").hidden = out;
+  document.getElementById("searchForm").hidden = out;
+}
+
+async function signinView() {
+  if (session.mode === "iis" || session.mode === "windows") {
+    show(h("div", { class: "signin" }, h("h1", {}, "Sign in"),
+      h("p", {}, "This workspace uses Windows sign-in. Open it at the address your team was given, from a PC signed in to the company network."),
+      h("p", { class: "muted small" }, "If that is where you are, ask an admin whether your account is enabled.")));
+    return;
+  }
+  const user = h("input", { autocomplete: "username", placeholder: "user name" });
+  const password = h("input", { type: "password", autocomplete: "current-password", placeholder: "password" });
+  const say = h("p", { class: "err small" });
+  const go = async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/login", { username: user.value, password: password.value });
+      session = await api("/api/session");
+      summaryCache = null;
+      location.hash = "#/";
+      route();
+    } catch (err) {
+      say.textContent = err.message;
+      password.value = "";
+    }
+  };
+  show(h("form", { class: "signin panel form", onsubmit: go }, h("h1", {}, "Sign in"),
+    h("label", {}, "User name", user), h("label", {}, "Password", password),
+    h("div", {}, h("button", { class: "primary", type: "submit" }, "Sign in")), say));
+  user.focus();
+}
+
+async function accountView() {
+  const data = await api("/api/account");
+  const user = data.user;
+  const tokenBox = h("div");
+  const name = h("input", { placeholder: "what it is for, e.g. companion on my laptop" });
+  const say = h("span", { class: "small" });
+  const createToken = async () => {
+    const made = await api("/api/account/tokens", { name: name.value || "companion" });
+    fill(tokenBox, h("p", {}, "Your new token. Copy it now: it is not shown again."), h("div", { class: "token" }, made.token),
+      h("p", { class: "muted small" }, "On your PC, in the companion's folder: powershell -ExecutionPolicy Bypass -File .\\install-companion.ps1 -Token <the token>"));
+    accountTokens(await api("/api/account"));
+  };
+  const list = h("div");
+  const accountTokens = (d) => fill(list, table([
+    { label: "Token", cell: (t) => h("code", {}, `${t.prefix}…`) },
+    { label: "For", cell: (t) => t.name },
+    { label: "Created", cell: (t) => fmtDate(t.created_at) },
+    { label: "Last used", cell: (t) => (t.last_used_at ? fmtDate(t.last_used_at) : "never") },
+    { label: "", cell: (t) => h("button", { onclick: async () => { await api("/api/account/tokens/revoke", { prefix: t.prefix }); accountTokens(await api("/api/account")); } }, "Revoke") },
+  ], d.tokens, "No tokens."));
+  accountTokens(data);
+  const old = h("input", { type: "password", autocomplete: "current-password" });
+  const fresh = h("input", { type: "password", autocomplete: "new-password" });
+  show(
+    h("h1", {}, user.display_name || user.username),
+    h("p", { class: "sub" }, `${user.username} · ${user.role}: ${ROLE_TEXT[user.role] || ""}`),
+    h("div", { class: "grid2" },
+      h("div", {},
+        h("h2", {}, "Tokens for the Desktop companion and scripts"),
+        h("p", { class: "muted small" }, "A token acts as you. Keep it on your own PC, and revoke it when the PC goes."),
+        list,
+        h("div", { class: "panel form" }, h("label", {}, "New token", name), h("div", {}, h("button", { class: "primary", onclick: createToken }, "Create token")), tokenBox)),
+      h("div", {},
+        data.mode === "local" ? [h("h2", {}, "Password"), h("div", { class: "panel form" },
+          h("label", {}, "Current password", old), h("label", {}, "New password (10 or more characters)", fresh),
+          h("div", {}, h("button", { onclick: async () => {
+            try { await api("/api/account/password", { old_password: old.value, new_password: fresh.value }); say.className = "saved"; say.textContent = "Changed. Sign in again on your other devices."; }
+            catch (err) { say.className = "err small"; say.textContent = err.message; }
+            old.value = fresh.value = "";
+          } }, "Change password")), say),
+        h("h2", {}, "Sign out"), h("button", { onclick: async () => { await api("/api/logout", {}); session = await api("/api/session"); location.hash = "#/signin"; route(); } }, "Sign out")] : null)),
+  );
+}
+
+async function adminView(params) {
+  const [users, log] = await Promise.all([api("/api/admin/users"), api(`/api/admin/audit?limit=100&user=${encodeURIComponent(params.get("user") || "")}`)]);
+  const say = h("span", { class: "small" });
+  const change = async (body) => {
+    try { await api("/api/admin/users", body); await adminView(params); }
+    catch (err) { say.className = "err small"; say.textContent = err.message; }
+  };
+  const newUser = h("input", { placeholder: session.mode === "local" ? "user name" : "DOMAIN\\user" });
+  const newName = h("input", { placeholder: "display name (optional)" });
+  const newRole = h("select", {}, ["viewer", "author", "reviewer", "admin"].map((r) => h("option", { value: r }, r)));
+  const newPassword = h("input", { type: "password", placeholder: "first password (10+ characters)", autocomplete: "new-password" });
+  show(
+    h("h1", {}, "Admin"),
+    h("p", { class: "sub" }, session.mode === "none" ? "This workspace has no sign-in, so these accounts are used only by tokens and other sign-in modes."
+      : session.mode === "local" ? "People sign in with workspace passwords." : "People sign in with Windows; their account is made on their first visit, as a viewer."),
+    h("h2", {}, "People"),
+    table([
+      { label: "User", cell: (u) => [h("div", {}, u.username), u.display_name ? h("div", { class: "muted small" }, u.display_name) : null] },
+      { label: "Role", cell: (u) => h("select", { onchange: (e) => change({ username: u.username, role: e.target.value }) },
+        ["viewer", "author", "reviewer", "admin"].map((r) => h("option", { value: r, selected: r === u.role }, r))) },
+      { label: "Last seen", cell: (u) => (u.last_seen_at ? fmtDate(u.last_seen_at) : "never") },
+      { label: "Tokens", num: true, cell: (u) => u.tokens },
+      { label: "", cell: (u) => h("button", { onclick: () => change({ username: u.username, disabled: !u.disabled }) }, u.disabled ? "Enable" : "Disable") },
+    ], users, "No accounts yet."),
+    say,
+    h("div", { class: "panel form" }, h("b", {}, "Add someone"), newUser, newName, newRole, session.mode === "local" ? newPassword : null,
+      h("div", {}, h("button", { class: "primary", onclick: () => change({ create: true, username: newUser.value, display_name: newName.value, role: newRole.value, password: newPassword.value || null }) }, "Add"))),
+    h("h2", {}, "Audit log"),
+    table([
+      { label: "When", cell: (r) => fmtDate(r.at) },
+      { label: "Who", cell: (r) => h("a", { href: `#/admin?user=${encodeURIComponent(r.username)}` }, r.username || "?") },
+      { label: "Did", cell: (r) => r.action },
+      { label: "On", cell: (r) => r.target },
+      { label: "From", cell: (r) => r.address },
+      { label: "Detail", cell: (r) => h("span", { class: "small muted" }, (r.detail || "").slice(0, 120)) },
+    ], log, "Nothing yet."),
+  );
+}
+
 // -- routing ------------------------------------------------------------------
 
 async function route() {
   const [path, query] = (location.hash.replace(/^#/, "") || "/").split("?");
   const params = new URLSearchParams(query || "");
+  try {
+    session = await api("/api/session");
+  } catch (err) { /* shown below */ }
+  updateSessionNav();
+  if (!session.signed_in) {
+    await signinView();
+    return;
+  }
+  if (path === "/signin") { location.hash = "#/"; return; }
   if (path !== "/search") document.getElementById("q").value = "";
   try {
     if (!summaryCache) summaryCache = await api("/api/summary");
     updateReviewNav();
+    updateChangesNav();
     let match;
     if ((match = path.match(/^\/model\/(\d+)$/))) await modelView(match[1], params);
     else if ((match = path.match(/^\/object\/(\d+)$/))) await objectView(match[1]);
@@ -720,6 +1116,11 @@ async function route() {
     else if (path === "/decisions") await decisionsView(params);
     else if (path === "/review") await reviewQueueView(params);
     else if (path === "/standards") await standardsView(params);
+    else if (path === "/changes") await changesView(params);
+    else if (path === "/account") await accountView();
+    else if (path === "/admin") await adminView(params);
+    else if ((match = path.match(/^\/change\/(\d+)$/))) await changeView(match[1]);
+    else if ((match = path.match(/^\/model\/(\d+)\/edit$/))) await editModelView(match[1], params);
     else if (path === "/standards/owner") await ownerView(params);
     else if ((match = path.match(/^\/version\/(\d+)$/))) await versionView(match[1], params);
     else await homeView();

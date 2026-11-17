@@ -13,6 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]
 daxlin = "dax_lineage.cli:main"
@@ -22,7 +23,7 @@ packages = ["dax_lineage", "dax_lineage.workspace"]
 
 [tool.setuptools.package-data]
 dax_lineage = ["template.html", "web/*.html"]
-"dax_lineage.workspace" = ["static/*"]
+"dax_lineage.workspace" = ["static/*", "companion/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
