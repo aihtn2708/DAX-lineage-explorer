@@ -95,7 +95,12 @@ def make_server(host: str = "127.0.0.1", port: int = 8765, quiet: bool = False, 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True, quiet: bool = False,
           allow_hosts=()) -> int:
-    server = make_server(host, port, quiet, allow_hosts)
+    try:
+        server = make_server(host, port, quiet, allow_hosts)
+    except OSError as err:
+        print(f"Cannot listen on {host}:{port} ({err.strerror or err}). Another program, or another\n"
+              f"`daxlin serve`, may be using that port: try --port {port + 1}.", file=sys.stderr)
+        return 1
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_address[1]}/"
     print(f"DAX lineage explorer on {url}", file=sys.stderr)
     if host not in LOOPBACK:

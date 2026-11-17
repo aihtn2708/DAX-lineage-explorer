@@ -13,26 +13,40 @@ and the report file.
 
 ## Run it locally
 
-Your model never has to leave your machine. Pick one:
+Your model never has to leave your machine. Download the repository
+(**Code → Download ZIP** on GitHub, then unzip it), and pick one:
 
-```
-# 1. One file, no server, no network: download it from the site
-#    (Downloads card) or write it from the package, then open it from disk
-daxlin offline -o dax-lineage-explorer.html
+| | Windows | macOS / Linux |
+|---|---|---|
+| **Easiest: no Python, no server** | double-click `docs\dax-lineage-explorer.html` | open `docs/dax-lineage-explorer.html` |
+| **Local server** on 127.0.0.1 | double-click `run-local.bat` | `./run-local.sh` |
+| **Same, from a terminal** in the repository folder | `py -m dax_lineage serve` | `python3 -m dax_lineage serve` |
+| **For a team**, on your own infrastructure | `docker build -t dax-lineage-explorer .` then `docker run --rm -p 127.0.0.1:8765:8765 dax-lineage-explorer` | same |
 
-# 2. A local server, on 127.0.0.1 only
-pip install -e .
-daxlin serve                      # opens http://127.0.0.1:8765
-
-# 3. For a team, on your own infrastructure
-docker build -t dax-lineage-explorer .
-docker run --rm -p 127.0.0.1:8765:8765 dax-lineage-explorer
-```
+The local server opens http://127.0.0.1:8765 in your browser. The launchers
+need Python 3.9 or later ([python.org](https://www.python.org/downloads/));
+without it they open the offline page instead, which does everything the same
+way. Nothing needs installing: `python -m dax_lineage` runs straight from the
+repository folder.
 
 Every page carries a Content-Security-Policy under which the browser refuses
 any request to another host. The offline page makes exactly one request, for
 itself. [SECURITY.md](SECURITY.md) has the details and how to check them,
 including a script that audits every request the page makes in a real browser.
+
+**`'daxlin' is not recognized as an internal or external command`** (Windows):
+the `daxlin` command exists only after `pip install`, and only if pip's
+`Scripts` folder is on your PATH, which it often is not. Use the module form
+instead; it takes the same arguments and needs neither:
+
+```
+py -m dax_lineage serve
+py -m dax_lineage unused -s "Supply Chain Sample.pbix"
+```
+
+`python -m dax_lineage …` works the same where the `py` launcher is missing.
+If you do want the short command: `py -m pip install -e .`, then add the
+`Scripts` folder pip mentions to your PATH (or reopen the terminal).
 
 ## Two ways to use it
 

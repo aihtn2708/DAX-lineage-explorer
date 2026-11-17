@@ -139,6 +139,13 @@ def _write(text: str, out, default_name: str) -> None:
 
 
 def main(argv=None) -> int:
+    # an older Windows console code page (cp437, cp850) cannot show every
+    # character a model may use; print what it can instead of crashing
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(
         prog="daxlin",
         description="Read DAX lineage out of INFO.MEASURES() query output and draw it.",

@@ -25,7 +25,7 @@ downloads.
 | | Network involved | Use it for |
 |---|---|---|
 | **Offline file** (`dax-lineage-explorer.html`) | none: open it from disk | sensitive models, air-gapped machines |
-| **`daxlin serve`** | `127.0.0.1` only | the same, when a browser policy blocks pages opened from disk |
+| **`run-local.bat` / `run-local.sh`** (`python -m dax_lineage serve`) | `127.0.0.1` only | the same, when a browser policy blocks pages opened from disk |
 | **Docker / internal hosting** | your network | a team on your infrastructure |
 | **Public site** | GitHub serves the page; your files stay in the tab | trying it out |
 
