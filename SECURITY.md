@@ -82,6 +82,29 @@ takes GitHub out of the picture: it never learns that you used the tool.
   load the page. Files they open still stay in their own browsers, but put
   it behind your usual access controls.
 
+## The team workspace
+
+`daxlin workspace` is different from the explorer in one way that matters: it
+**keeps** what it reads. Each scan stores measure names, DAX, column names,
+visual titles and the team's notes in a SQLite file (`pbi-workspace.db` unless
+`--db` says otherwise). Treat that file like the models themselves: keep it on
+a disk only the team can read, include it in your backups, and keep it out of
+git (`.gitignore` already does).
+
+What protects it:
+
+- Folders are scanned read-only; no `.pbix` is ever written.
+- `daxlin workspace serve` listens on 127.0.0.1 and refuses any other `Host`
+  name unless you allow it, which defeats DNS rebinding.
+- Changes (notes, decisions, starting a scan) are accepted only as `POST` with a
+  JSON body, and an `Origin` header from another site is refused, so a web page
+  elsewhere cannot make your browser change the workspace.
+- The page loads its script and styles only from the workspace server and may
+  call only it (`script-src 'self'; connect-src 'self'`). Everything read from a
+  `.pbix` is shown as text, never as HTML.
+- There are **no sign-ins yet**. On a shared server, put it behind a proxy that
+  signs people in, or use `--read-only`.
+
 ## Reporting a vulnerability
 
 Please report it privately through GitHub: the repository's **Security** tab,

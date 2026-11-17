@@ -12,6 +12,11 @@ Run the explorer on this machine, with nothing sent anywhere:
     daxlin serve                         # http://127.0.0.1:8765
     daxlin offline -o explorer.html      # one file to open from disk, no server
 
+A catalogue of every model the team keeps (see `daxlin workspace --help`):
+    daxlin workspace add-folder "C:/Users/me/Contoso/BI - Reports"
+    daxlin workspace scan
+    daxlin workspace serve                       # http://127.0.0.1:8766
+
 With the report, for where-used and unused measures:
     daxlin unused     -s model.xlsx --report "Sales.pbix"   # exits 1 if any are unused
     daxlin where-used "Total Sales" -s model.xlsx --report "Sales.pbix"
@@ -146,6 +151,10 @@ def main(argv=None) -> int:
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
             pass
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["workspace"]:
+        from .workspace.cli import main as workspace_main
+        return workspace_main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="daxlin",
         description="Read DAX lineage out of INFO.MEASURES() query output and draw it.",

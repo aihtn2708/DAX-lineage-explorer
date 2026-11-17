@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Power BI workspace</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="#/">Power BI workspace <span>catalogue</span></a>
+    <form id="searchForm" role="search">
+      <input id="q" type="search" placeholder="Find a measure or column in every model" aria-label="Search" autocomplete="off">
+      <label class="check"><input id="inDax" type="checkbox"> in DAX too</label>
+    </form>
+    <nav>
+      <a href="#/">Models</a>
+      <a href="#/decisions">Cleanup list</a>
+    </nav>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <footer>Runs on this machine. Your .pbix files are only read, and nothing is sent anywhere else.</footer>
+</body>
+</html>

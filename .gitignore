@@ -10,3 +10,7 @@ lineage.html
 lineage.json
 lineage.dot
 .DS_Store
+# the team workspace database holds model metadata: keep it out of git
+pbi-workspace.db*
+*.db-wal
+*.db-shm

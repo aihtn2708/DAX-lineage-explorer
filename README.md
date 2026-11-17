@@ -48,6 +48,65 @@ py -m dax_lineage unused -s "Supply Chain Sample.pbix"
 If you do want the short command: `py -m pip install -e .`, then add the
 `Scripts` folder pip mentions to your PATH (or reopen the terminal).
 
+## Team workspace: every model in one catalogue (preview)
+
+For a team that keeps its `.pbix` files on SharePoint or OneDrive: point the workspace at the synced
+folder, and it reads every model each night into a database on your own machine. Then anyone can
+find a measure across all models, see which visuals use it, and leave notes, owners and keep/remove
+decisions that stay attached to the measure through renames and new versions.
+
+```bash
+daxlin workspace add-folder "C:/Users/me/Contoso/BI - Reports"   # the synced SharePoint library
+daxlin workspace scan                                            # reads every changed .pbix / .pbit
+daxlin workspace serve                                           # http://127.0.0.1:8766
+```
+
+Without installing, from the repository folder: `run-workspace.bat add-folder "PATH"`, then
+`run-workspace.bat scan`, then double-click `run-workspace.bat` to open it (`./run-workspace.sh` on macOS
+and Linux). The database is `pbi-workspace.db` next to it.
+
+![The workspace: four models, their unused measures and owners](docs/assets/workspace-models.png)
+
+- **Models** lists every file with its version, measures, visuals, unused measures and owner.
+- **Search** finds a measure or column by name in every model (tick *in DAX too* to search expressions),
+  including reports whose model is published elsewhere.
+- **A measure** shows its DAX, the visuals that use it directly and through other measures, what it reads
+  and what reads it, the same name in other models, and its history across versions.
+- **Team notes**: owner, a note, and *keep* or *remove*. The **Cleanup list** gathers every *remove* across
+  models, for the clean-up session.
+
+![A measure: its visuals, readers, other models, and the team's notes](docs/assets/workspace-measure.png)
+
+**Each saved file becomes a version.** A file is read again only when its size or date changed and its
+SHA-256 differs, so OneDrive does not download files that are only online. Measures and columns are
+matched across versions by their Power BI **LineageTag**, which survives renames, so a note made on
+`Total Sales` is still there after it becomes `Net Sales`. A file that fails to read is recorded with
+the reason and does not stop the scan; a file that disappears is kept, marked *file not found*.
+
+**Run the scan every night** with Windows Task Scheduler (or cron on a server):
+
+```bat
+schtasks /create /tn "Power BI workspace scan" /sc daily /st 02:00 ^
+  /tr "python -m dax_lineage workspace --db D:\pbi\workspace.db scan --quiet"
+```
+
+**Privacy and safety.**
+- Files are only ever opened for reading; nothing writes to a `.pbix`.
+- The database is one SQLite file you choose with `--db` (default `pbi-workspace.db`, or `$DAXLIN_WORKSPACE_DB`).
+- The server listens on 127.0.0.1 and loads nothing from anywhere else; its page may call only itself.
+- Changes must be JSON POSTs from the page's own origin, so another website cannot send them.
+- There are no sign-ins yet. To share the workspace on your network, put it behind a proxy that signs people
+  in, or run `serve --read-only --host 0.0.0.0 --allow-host bi-workspace.corp`.
+
+**Limits of this preview.**
+- *Unused* means unused by the report inside the same file. Reports built on the published model are scanned
+  as *report only* and matched by name; check them before removing anything.
+- PBIP folders and models published to the service are not scanned yet.
+- Who saved a version is not known from a synced folder, only when.
+
+The design behind it, and the milestones that follow (version review, standards, applying changes
+through Power BI Desktop), are in the project's design document.
+
 ## Two ways to use it
 
 Same rules and same results:
@@ -267,6 +326,7 @@ not what the engine does with it.
 | `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
 | `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
 | `dax_lineage/offline.py`, `serve.py` | the single-file offline page, and `daxlin serve` |
+| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
 | `docs/dax-lineage-explorer.html` | the offline page, built from docs/ by `scripts/build_offline.py` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
@@ -280,7 +340,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 72 Python tests
+python3 -m pytest tests -q                  # 83 Python tests
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/
