@@ -18,6 +18,7 @@ const STATUS_HELP = {
 };
 const view = document.getElementById("view");
 let summaryCache = null;
+let session = { mode: "none", signed_in: true, user: null };
 let lastScanLog = [];
 
 // -- helpers ----------------------------------------------------------------
@@ -44,6 +45,11 @@ async function api(path, body) {
   };
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && path !== "/api/login") {
+    session = { ...session, signed_in: false, user: null };
+    if (!location.hash.startsWith("#/signin")) location.hash = "#/signin";
+    throw new Error(data.error || "sign in first");
+  }
   if (!response.ok && response.status !== 409) throw new Error(data.error || response.statusText);
   return data;
 }
@@ -59,16 +65,30 @@ const badge = (status, text) => h("span", { class: `badge ${status}`, title: STA
 const kindTag = (kind) => h("span", { class: `kind ${kind}` }, kind);
 const objLink = (o) => (o.id ? h("a", { href: `#/object/${o.id}` }, fieldLabel(o)) : h("span", { class: "muted" }, fieldLabel(o)));
 const tile = (value, label, alert) => h("div", { class: `tile${alert ? " alert" : ""}` }, h("b", {}, n(value)), h("span", {}, label));
-const me = () => { try { return localStorage.getItem("workspace.me") || ""; } catch { return ""; } };
+const RANK = { viewer: 0, author: 1, reviewer: 2, admin: 3 };
+const can = (role) => !session.user || (RANK[session.user.role] ?? -1) >= RANK[role];
+const signedName = () => (session.mode !== "none" && session.user ? (session.user.display_name || session.user.username) : "");
+const me = () => { if (signedName()) return signedName(); try { return localStorage.getItem("workspace.me") || ""; } catch { return ""; } };
 const setMe = (name) => { try { localStorage.setItem("workspace.me", name); } catch { /* storage off */ } };
+
+function nameFields(root) {
+  // signed in: notes, reviews and changes carry the sign-in name, so no one types a name
+  if (!signedName()) return;
+  root.querySelectorAll("input[placeholder='your name']").forEach((input) => {
+    input.value = signedName();
+    (input.closest("label") || input).hidden = true;
+  });
+}
 
 function fill(el, ...nodes) {
   el.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+  nameFields(el);
   return el;
 }
 
 function show(...nodes) {
   view.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+  nameFields(view);
   window.scrollTo(0, 0);
 }
 
@@ -86,7 +106,7 @@ async function homeView() {
   summaryCache = summary;
   updateReviewNav();
   const run = summary.last_run;
-  const scanButton = h("button", { class: "primary", disabled: summary.read_only || summary.scan.running, onclick: startScan },
+  const scanButton = h("button", { class: "primary", disabled: summary.read_only || summary.scan.running || (session.user && session.user.role !== "admin"), onclick: startScan },
     summary.scan.running ? "Scanning…" : "Scan now");
   const live = models.filter((m) => !m.missing);
   show(
@@ -529,7 +549,7 @@ async function versionView(id, params) {
     h("div", { class: "grid2" },
       h("div", {}, left),
       h("div", {},
-        reviewable ? [h("h2", {}, "Review"),
+        reviewable && can("reviewer") ? [h("h2", {}, "Review"),
           h("div", { class: "panel form" },
             v.reviewer ? h("div", { class: "small" }, reviewBadge(v.review), `  by ${v.reviewer}, ${fmtDate(v.decided_at)}`) : null,
             h("label", {}, "Your name", by),
@@ -821,7 +841,7 @@ async function changeView(id) {
   };
   const decide = (status, text, cls) => h("button", { class: cls || "", disabled: readOnly, onclick: () => post(`/api/changes/${id}/decision`, { status, note: note.value }) }, text);
   const expressionOps = r.ops.filter((o) => o.op === "expression");
-  const selfApproval = r.status === "proposed" && by.value && by.value.trim().toLowerCase() === (r.created_by || "").trim().toLowerCase();
+  const selfApproval = r.status === "proposed" && can("reviewer") && by.value && by.value.trim().toLowerCase() === (r.created_by || "").trim().toLowerCase();
 
   show(
     h("div", { class: "crumbs" }, h("a", { href: "#/changes" }, "Changes"), " › ", `#${r.id}`),
@@ -857,8 +877,9 @@ async function changeView(id) {
           h("label", {}, "Your name", by),
           h("label", {}, "Note", note),
           selfApproval ? h("div", { class: "small muted" }, "You proposed this: ask someone else to approve it.") : null,
+          r.status === "proposed" && !can("reviewer") ? h("div", { class: "small muted" }, "A reviewer approves or rejects it.") : null,
           h("div", { class: "buttons" },
-            r.status === "proposed" ? [decide("approved", "Approve", "good"), decide("rejected", "Reject", "bad")] : null,
+            r.status === "proposed" && can("reviewer") ? [decide("approved", "Approve", "good"), decide("rejected", "Reject", "bad")] : null,
             ["proposed", "approved"].includes(r.status) ? decide("cancelled", "Cancel") : null,
             ["approved", "rejected"].includes(r.status) ? decide("proposed", "Reopen") : null),
           say),
@@ -939,11 +960,150 @@ function cleanupProposals(rows) {
     out];
 }
 
+
+// -- milestone 5: sign-in, account, administration -------------------------------------
+
+const ROLE_TEXT = { viewer: "reads everything", author: "notes, comments, proposes and applies changes",
+  reviewer: "approves versions and changes, exceptions, rules", admin: "accounts, roles, scans, audit log" };
+
+function updateSessionNav() {
+  const account = document.getElementById("accountNav");
+  const admin = document.getElementById("adminNav");
+  const user = session.user;
+  account.hidden = !(session.mode !== "none" && user);
+  if (!account.hidden) account.replaceChildren(user.display_name || user.username, h("span", { class: "role" }, user.role));
+  admin.hidden = !(user && user.role === "admin");
+  const out = !session.signed_in;
+  document.querySelector("header nav").hidden = out;
+  document.getElementById("searchForm").hidden = out;
+}
+
+async function signinView() {
+  if (session.mode === "iis" || session.mode === "windows") {
+    show(h("div", { class: "signin" }, h("h1", {}, "Sign in"),
+      h("p", {}, "This workspace uses Windows sign-in. Open it at the address your team was given, from a PC signed in to the company network."),
+      h("p", { class: "muted small" }, "If that is where you are, ask an admin whether your account is enabled.")));
+    return;
+  }
+  const user = h("input", { autocomplete: "username", placeholder: "user name" });
+  const password = h("input", { type: "password", autocomplete: "current-password", placeholder: "password" });
+  const say = h("p", { class: "err small" });
+  const go = async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/login", { username: user.value, password: password.value });
+      session = await api("/api/session");
+      summaryCache = null;
+      location.hash = "#/";
+      route();
+    } catch (err) {
+      say.textContent = err.message;
+      password.value = "";
+    }
+  };
+  show(h("form", { class: "signin panel form", onsubmit: go }, h("h1", {}, "Sign in"),
+    h("label", {}, "User name", user), h("label", {}, "Password", password),
+    h("div", {}, h("button", { class: "primary", type: "submit" }, "Sign in")), say));
+  user.focus();
+}
+
+async function accountView() {
+  const data = await api("/api/account");
+  const user = data.user;
+  const tokenBox = h("div");
+  const name = h("input", { placeholder: "what it is for, e.g. companion on my laptop" });
+  const say = h("span", { class: "small" });
+  const createToken = async () => {
+    const made = await api("/api/account/tokens", { name: name.value || "companion" });
+    fill(tokenBox, h("p", {}, "Your new token. Copy it now: it is not shown again."), h("div", { class: "token" }, made.token),
+      h("p", { class: "muted small" }, "On your PC, in the companion's folder: powershell -ExecutionPolicy Bypass -File .\\install-companion.ps1 -Token <the token>"));
+    accountTokens(await api("/api/account"));
+  };
+  const list = h("div");
+  const accountTokens = (d) => fill(list, table([
+    { label: "Token", cell: (t) => h("code", {}, `${t.prefix}…`) },
+    { label: "For", cell: (t) => t.name },
+    { label: "Created", cell: (t) => fmtDate(t.created_at) },
+    { label: "Last used", cell: (t) => (t.last_used_at ? fmtDate(t.last_used_at) : "never") },
+    { label: "", cell: (t) => h("button", { onclick: async () => { await api("/api/account/tokens/revoke", { prefix: t.prefix }); accountTokens(await api("/api/account")); } }, "Revoke") },
+  ], d.tokens, "No tokens."));
+  accountTokens(data);
+  const old = h("input", { type: "password", autocomplete: "current-password" });
+  const fresh = h("input", { type: "password", autocomplete: "new-password" });
+  show(
+    h("h1", {}, user.display_name || user.username),
+    h("p", { class: "sub" }, `${user.username} · ${user.role}: ${ROLE_TEXT[user.role] || ""}`),
+    h("div", { class: "grid2" },
+      h("div", {},
+        h("h2", {}, "Tokens for the Desktop companion and scripts"),
+        h("p", { class: "muted small" }, "A token acts as you. Keep it on your own PC, and revoke it when the PC goes."),
+        list,
+        h("div", { class: "panel form" }, h("label", {}, "New token", name), h("div", {}, h("button", { class: "primary", onclick: createToken }, "Create token")), tokenBox)),
+      h("div", {},
+        data.mode === "local" ? [h("h2", {}, "Password"), h("div", { class: "panel form" },
+          h("label", {}, "Current password", old), h("label", {}, "New password (10 or more characters)", fresh),
+          h("div", {}, h("button", { onclick: async () => {
+            try { await api("/api/account/password", { old_password: old.value, new_password: fresh.value }); say.className = "saved"; say.textContent = "Changed. Sign in again on your other devices."; }
+            catch (err) { say.className = "err small"; say.textContent = err.message; }
+            old.value = fresh.value = "";
+          } }, "Change password")), say),
+        h("h2", {}, "Sign out"), h("button", { onclick: async () => { await api("/api/logout", {}); session = await api("/api/session"); location.hash = "#/signin"; route(); } }, "Sign out")] : null)),
+  );
+}
+
+async function adminView(params) {
+  const [users, log] = await Promise.all([api("/api/admin/users"), api(`/api/admin/audit?limit=100&user=${encodeURIComponent(params.get("user") || "")}`)]);
+  const say = h("span", { class: "small" });
+  const change = async (body) => {
+    try { await api("/api/admin/users", body); await adminView(params); }
+    catch (err) { say.className = "err small"; say.textContent = err.message; }
+  };
+  const newUser = h("input", { placeholder: session.mode === "local" ? "user name" : "DOMAIN\\user" });
+  const newName = h("input", { placeholder: "display name (optional)" });
+  const newRole = h("select", {}, ["viewer", "author", "reviewer", "admin"].map((r) => h("option", { value: r }, r)));
+  const newPassword = h("input", { type: "password", placeholder: "first password (10+ characters)", autocomplete: "new-password" });
+  show(
+    h("h1", {}, "Admin"),
+    h("p", { class: "sub" }, session.mode === "none" ? "This workspace has no sign-in, so these accounts are used only by tokens and other sign-in modes."
+      : session.mode === "local" ? "People sign in with workspace passwords." : "People sign in with Windows; their account is made on their first visit, as a viewer."),
+    h("h2", {}, "People"),
+    table([
+      { label: "User", cell: (u) => [h("div", {}, u.username), u.display_name ? h("div", { class: "muted small" }, u.display_name) : null] },
+      { label: "Role", cell: (u) => h("select", { onchange: (e) => change({ username: u.username, role: e.target.value }) },
+        ["viewer", "author", "reviewer", "admin"].map((r) => h("option", { value: r, selected: r === u.role }, r))) },
+      { label: "Last seen", cell: (u) => (u.last_seen_at ? fmtDate(u.last_seen_at) : "never") },
+      { label: "Tokens", num: true, cell: (u) => u.tokens },
+      { label: "", cell: (u) => h("button", { onclick: () => change({ username: u.username, disabled: !u.disabled }) }, u.disabled ? "Enable" : "Disable") },
+    ], users, "No accounts yet."),
+    say,
+    h("div", { class: "panel form" }, h("b", {}, "Add someone"), newUser, newName, newRole, session.mode === "local" ? newPassword : null,
+      h("div", {}, h("button", { class: "primary", onclick: () => change({ create: true, username: newUser.value, display_name: newName.value, role: newRole.value, password: newPassword.value || null }) }, "Add"))),
+    h("h2", {}, "Audit log"),
+    table([
+      { label: "When", cell: (r) => fmtDate(r.at) },
+      { label: "Who", cell: (r) => h("a", { href: `#/admin?user=${encodeURIComponent(r.username)}` }, r.username || "?") },
+      { label: "Did", cell: (r) => r.action },
+      { label: "On", cell: (r) => r.target },
+      { label: "From", cell: (r) => r.address },
+      { label: "Detail", cell: (r) => h("span", { class: "small muted" }, (r.detail || "").slice(0, 120)) },
+    ], log, "Nothing yet."),
+  );
+}
+
 // -- routing ------------------------------------------------------------------
 
 async function route() {
   const [path, query] = (location.hash.replace(/^#/, "") || "/").split("?");
   const params = new URLSearchParams(query || "");
+  try {
+    session = await api("/api/session");
+  } catch (err) { /* shown below */ }
+  updateSessionNav();
+  if (!session.signed_in) {
+    await signinView();
+    return;
+  }
+  if (path === "/signin") { location.hash = "#/"; return; }
   if (path !== "/search") document.getElementById("q").value = "";
   try {
     if (!summaryCache) summaryCache = await api("/api/summary");
@@ -957,6 +1117,8 @@ async function route() {
     else if (path === "/review") await reviewQueueView(params);
     else if (path === "/standards") await standardsView(params);
     else if (path === "/changes") await changesView(params);
+    else if (path === "/account") await accountView();
+    else if (path === "/admin") await adminView(params);
     else if ((match = path.match(/^\/change\/(\d+)$/))) await changeView(match[1]);
     else if ((match = path.match(/^\/model\/(\d+)\/edit$/))) await editModelView(match[1], params);
     else if (path === "/standards/owner") await ownerView(params);

@@ -52,9 +52,19 @@ Say ""
 Say "Power BI workspace companion" "Cyan"
 
 # -- settings --------------------------------------------------------------------------
+# companion.config.json next to this script holds the workspace address for everyone on the PC;
+# %APPDATA%\PowerBIWorkspace\companion.json holds this person's own API token, if the workspace uses sign-in.
 $config = $null
 $configPath = Join-Path $PSScriptRoot "companion.config.json"
 if (Test-Path $configPath) { $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+$personal = $null
+if ($env:APPDATA) {
+    $personalPath = Join-Path $env:APPDATA "PowerBIWorkspace\companion.json"
+    if (Test-Path $personalPath) { $personal = Get-Content $personalPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+}
+$token = Prop $personal "token"
+if (-not $token) { $token = $env:DAXLIN_WORKSPACE_TOKEN }
+if (-not $Workspace) { $Workspace = Prop $personal "workspace" }
 if (-not $Workspace) { $Workspace = Prop $config "workspace" }
 if (-not $Workspace) { $Workspace = $env:DAXLIN_WORKSPACE_URL }
 if (-not $Workspace) { $Workspace = "http://127.0.0.1:8766" }
@@ -114,10 +124,17 @@ Say ("Connected to the model open in Desktop: {0} tables" -f $model.Tables.Count
 # -- the workspace ---------------------------------------------------------------------
 function Call-Workspace([string] $method, [string] $path, $body) {
     $uri = $Workspace + $path
-    if ($null -eq $body) { return Invoke-RestMethod -Method $method -Uri $uri -UseBasicParsing }
+    # a personal token when the workspace uses sign-in; with Windows sign-in through IIS,
+    # the PC's own Windows credentials are sent as well
+    $headers = @{}
+    if ($token) { $headers["Authorization"] = "Bearer $token" }
+    if ($null -eq $body) {
+        return Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -UseDefaultCredentials -UseBasicParsing
+    }
     $json = ConvertTo-Json -InputObject $body -Depth 8 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-    return Invoke-RestMethod -Method $method -Uri $uri -Body $bytes -ContentType "application/json; charset=utf-8" -UseBasicParsing
+    return Invoke-RestMethod -Method $method -Uri $uri -Body $bytes -Headers $headers -UseDefaultCredentials `
+        -ContentType "application/json; charset=utf-8" -UseBasicParsing
 }
 
 try {
@@ -126,6 +143,7 @@ try {
 } catch {
     Say "Could not reach the workspace at $Workspace : $($_.Exception.Message)" "Red"
     Say "Start it with run-workspace.bat (or daxlin workspace serve), or set the address in companion.config.json."
+    Say "If it asks for sign-in: create a token on the workspace's My account page and run install-companion.ps1 -Token <token>."
     Done 1
 }
 

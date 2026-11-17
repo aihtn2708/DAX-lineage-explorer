@@ -14,7 +14,12 @@
     daxlin workspace changes "Sales"         # what changed in its latest version
     daxlin workspace changes --since 1d      # everything saved since yesterday, as text
 
-Every command takes --db PATH (default: pbi-workspace.db here, or $DAXLIN_WORKSPACE_DB).
+Every command takes --db (default: pbi-workspace.db here, or $DAXLIN_WORKSPACE_DB): a SQLite
+file, or a Postgres URL such as postgresql://workspace@db.corp/powerbi for the team server.
+
+    daxlin workspace users add contoso\\linh --role admin    # accounts and roles
+    daxlin workspace serve --auth iis --allow-host bi.corp       # started by IIS, Windows sign-in
+    daxlin workspace backup --out workspace.jsonl.gz           # restore it anywhere with `restore`
 """
 
 from __future__ import annotations
@@ -39,7 +44,8 @@ def _table(rows: list, columns: list) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="daxlin workspace",
                                      description="A catalogue of every Power BI model your team keeps, on your own machine.")
-    parser.add_argument("--db", default=None, help="the workspace database (default: pbi-workspace.db, or $DAXLIN_WORKSPACE_DB)")
+    parser.add_argument("--db", default=None,
+                        help="a SQLite file or a postgresql:// URL (default: pbi-workspace.db, or $DAXLIN_WORKSPACE_DB)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("add-folder", help="register a folder of .pbix/.pbit files, e.g. a synced SharePoint library")
@@ -60,6 +66,18 @@ def main(argv=None) -> int:
                    help="a host name the page is reached under (behind a proxy)")
     p.add_argument("--scan-every", type=int, default=0, metavar="MINUTES",
                    help="also scan the registered folders every MINUTES while serving")
+    p.add_argument("--auth", choices=["none", "local", "iis", "windows"], default="none",
+                   help="sign-in: none (this PC only), local (workspace passwords), iis (Windows sign-in, run by IIS), "
+                        "windows (a proxy that signs people in passes the user name in a header)")
+    p.add_argument("--trusted-proxy", action="append", default=[], metavar="ADDRESS",
+                   help="iis/windows: the address requests come from (default 127.0.0.1 and ::1)")
+    p.add_argument("--user-header", default="X-Remote-User", help="windows: the header holding the user name")
+    p.add_argument("--default-role", choices=["viewer", "author", "reviewer", "admin"], default="viewer",
+                   help="iis/windows: the role of someone signing in for the first time (default viewer)")
+    p.add_argument("--allow-self-approval", action="store_true",
+                   help="let people approve their own changes (off by default)")
+    p.add_argument("--session-hours", type=int, default=12, help="local: how long a sign-in lasts (default 12)")
+    p.add_argument("--secure-cookies", action="store_true", help="local: the page is served over HTTPS by a proxy")
     sub.add_parser("models", help="list models with their unused measures")
     p = sub.add_parser("search", help="find a measure or column in every model")
     p.add_argument("query")
@@ -86,6 +104,26 @@ def main(argv=None) -> int:
     p.add_argument("--all", action="store_true")
     p = sub.add_parser("companion", help="write the Power BI Desktop companion and its installer to a folder")
     p.add_argument("--out", default="powerbi-workspace-companion", help="folder to write (default: powerbi-workspace-companion)")
+    p = sub.add_parser("users", help="accounts and roles: list, add, set")
+    p.add_argument("action", nargs="?", default="list", choices=["list", "add", "set"])
+    p.add_argument("username", nargs="?")
+    p.add_argument("--role", choices=["viewer", "author", "reviewer", "admin"])
+    p.add_argument("--display-name")
+    p.add_argument("--password", action="store_true", help="ask for a password (for --auth local)")
+    p.add_argument("--disable", action="store_true")
+    p.add_argument("--enable", action="store_true")
+    p = sub.add_parser("tokens", help="API tokens, e.g. for the Desktop companion: create, list, revoke")
+    p.add_argument("action", choices=["create", "list", "revoke"])
+    p.add_argument("target", help="create/list: the user name; revoke: the token's first 12 characters")
+    p.add_argument("--name", default="companion", help="create: what the token is for")
+    p = sub.add_parser("audit", help="who changed what, newest first")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--user", default="")
+    p = sub.add_parser("backup", help="write the whole workspace to one file")
+    p.add_argument("--out", required=True, help="the file to write, e.g. workspace.jsonl.gz")
+    p = sub.add_parser("restore", help="load a backup into an empty workspace (SQLite or Postgres)")
+    p.add_argument("file")
+    p.add_argument("--force", action="store_true", help="replace what this workspace holds")
     p = sub.add_parser("review", help="versions waiting for review (or --all)")
     p.add_argument("--all", action="store_true", help="every reviewable version, with its state")
     args = parser.parse_args(argv)
@@ -111,9 +149,13 @@ def main(argv=None) -> int:
             print(summary["log"][-1])
         return 1 if summary["failed"] else 0
     elif args.command == "serve":
-        from .app import serve
+        from .app import AuthConfig, serve
+        auth = AuthConfig(mode=args.auth, trusted_proxies=tuple(args.trusted_proxy or ("127.0.0.1", "::1")),
+                          user_header=args.user_header, default_role=args.default_role,
+                          allow_self_approval=args.allow_self_approval, session_hours=max(1, args.session_hours),
+                          secure_cookies=args.secure_cookies)
         return serve(store, args.host, args.port, open_browser=not args.no_open, allow_hosts=args.allow_host,
-                     read_only=args.read_only, scan_every=max(0, args.scan_every))
+                     read_only=args.read_only, scan_every=max(0, args.scan_every), auth=auth)
     elif args.command == "models":
         from .check import ensure_checked
         ensure_checked(store)
@@ -139,6 +181,44 @@ def main(argv=None) -> int:
         print(_table(rows, ["id", "model", "change", "edits", "status", "proposed by", "decided by"]) or "no open changes")
     elif args.command == "companion":
         return _companion(args.out)
+    elif args.command == "users":
+        return _users(store, args)
+    elif args.command == "tokens":
+        from . import auth as A
+        if args.action == "create":
+            try:
+                token = A.create_token(store, args.target, args.name)
+            except KeyError as err:
+                raise SystemExit(str(err).strip("'\"")) from None
+            _audit(store, "tokens.create", args.target, {"name": args.name, "prefix": token[:12]})
+            print(f"{token}\nShown once: put it in the companion's companion.config.json (\"token\"), "
+                  f"or run install-companion.ps1 -Token {token[:12]}...")
+        elif args.action == "list":
+            rows = [(t["prefix"], t["name"], t["created_at"][:16], (t["last_used_at"] or "never")[:16])
+                    for t in A.tokens(store, args.target)]
+            print(_table(rows, ["token", "for", "created", "last used"]) or "no tokens")
+        else:
+            gone = A.revoke_token(store, args.target)
+            if gone:
+                _audit(store, "tokens.revoke", args.target)
+            print("revoked" if gone else "no such token")
+    elif args.command == "audit":
+        from . import auth as A
+        rows = [(r["at"][:19].replace("T", " "), r["username"], r["action"], r["target"], r["address"],
+                 r["detail"][:60]) for r in A.audit_log(store, args.limit, args.user)]
+        print(_table(rows, ["when (UTC)", "who", "did", "on", "from", "detail"]) or "nothing yet")
+    elif args.command == "backup":
+        from .backup import backup
+        counts = backup(store, args.out)
+        print(f"wrote {args.out}: " + ", ".join(f"{n} {t}" for t, n in counts.items() if n))
+    elif args.command == "restore":
+        from .backup import restore
+        try:
+            counts = restore(store, args.file, force=args.force)
+        except ValueError as err:
+            raise SystemExit(str(err)) from None
+        _audit(store, "restore", str(args.file))
+        print(f"restored into {store.location}: " + ", ".join(f"{n} {t}" for t, n in counts.items() if n))
     elif args.command == "rules":
         return _rules(store, args)
     elif args.command == "review":
@@ -204,6 +284,8 @@ def _rules(store: Store, args) -> int:
         try:
             rule = set_rule(store, args.target, True if args.on else False if args.off else None, args.severity,
                             params or None, by="command line")
+            _audit(store, "rules.set", args.target, {"on": args.on, "off": args.off, "severity": args.severity,
+                                                     "params": params})
         except (KeyError, ValueError) as err:
             raise SystemExit(str(err).strip("'\"")) from None
         print(f"{rule['id']}: {'on' if rule['enabled'] else 'off'}, {rule['severity']}, {rule['params'] or ''}\n"
@@ -228,6 +310,49 @@ def _rules(store: Store, args) -> int:
     elif args.action == "reset":
         reset_rules(store)
         print("every rule is back to its default")
+    return 0
+
+
+def _audit(store: Store, action: str, target: str = "", detail=None) -> None:
+    """Changes made from the command line go into the audit log too, under the PC's user name."""
+    import getpass
+    from . import auth as A
+    try:
+        who = getpass.getuser()
+    except Exception:
+        who = "unknown"
+    A.audit(store, {"username": f"command line ({who})"}, action, target, detail, "")
+
+
+def _users(store: Store, args) -> int:
+    from getpass import getpass
+    from . import auth as A
+    if args.action == "list":
+        rows = [(a["username"], a["display_name"], a["role"], "disabled" if a["disabled"] else "",
+                 "yes" if a["has_password"] else "", a["tokens"], (a["last_seen_at"] or "never")[:16])
+                for a in A.accounts(store)]
+        print(_table(rows, ["user", "name", "role", "", "password", "tokens", "last seen"]) or "no accounts yet")
+        return 0
+    if not args.username:
+        raise SystemExit(f"users {args.action} needs a user name")
+    password = None
+    if args.password:
+        password = getpass("Password (10 or more characters): ")
+        if password != getpass("Again: "):
+            raise SystemExit("the two passwords differ")
+    try:
+        if args.action == "add":
+            made = A.add_account(store, args.username, args.role or "viewer", args.display_name or "", password)
+            _audit(store, "admin.users.add", made["username"], {"role": made["role"]})
+            print(f"added {made['username']} as {made['role']}")
+        else:
+            disabled = True if args.disable else False if args.enable else None
+            changed = A.update_account(store, args.username, args.role, args.display_name, password, disabled)
+            _audit(store, "admin.users.set", changed["username"],
+                   {"role": args.role, "disabled": disabled, "password": "changed" if password else None})
+            print(f"{changed['username']}: {changed['role']}" + (", disabled" if changed["disabled"] else ""))
+    except (KeyError, ValueError) as err:
+        raise SystemExit(str(err).strip("'\"")) from None
     return 0
 
 

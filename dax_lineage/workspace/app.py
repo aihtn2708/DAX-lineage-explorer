@@ -28,9 +28,14 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
+from http.cookies import SimpleCookie
+from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
 from ..serve import LOOPBACK
+from dataclasses import dataclass
+
+from . import auth as A
 from . import changes as change_requests
 from . import check as standards_check
 from .diff import compare
@@ -88,14 +93,54 @@ class ScanJob:
         return {"running": self.running, "log": self.lines[-200:]}
 
 
+@dataclass
+class AuthConfig:
+    """How people sign in; see auth.py."""
+    mode: str = "none"
+    trusted_proxies: tuple = ("127.0.0.1", "::1")
+    user_header: str = "X-Remote-User"
+    default_role: str = "viewer"
+    allow_self_approval: bool = False
+    session_hours: int = 12
+    secure_cookies: bool = False
+    token_resolver: Optional[object] = None  # iis: hex token handle -> DOMAIN\user (A.iis_token_user)
+
+
+COOKIE = "pbiw_session"
+
+
+def required_role(path: str, body: dict) -> str:
+    """The least role that may make this POST."""
+    if path == "/api/scan" or path.startswith("/api/admin/"):
+        return "admin"
+    if path.startswith("/api/account/"):
+        return "viewer"
+    if re.fullmatch(r"/api/versions/\d+/review", path) or path.startswith("/api/rules/") or path == "/api/exceptions":
+        return "reviewer"
+    if re.fullmatch(r"/api/changes/\d+/decision", path):
+        return "author" if body.get("status") == "cancelled" else "reviewer"
+    return "author"
+
+
+def action_name(path: str) -> tuple:
+    """("change.decision", "12") from /api/changes/12/decision, for the audit log."""
+    parts = [p for p in path.split("/") if p and p != "api"]
+    target = ",".join(p for p in parts if p.isdigit())
+    words = [p for p in parts if not p.isdigit()]
+    return ".".join(words) or "request", target
+
+
 class ApiError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
 
 
-def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool, job=None):
+def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool, job=None,
+                 auth: Optional[AuthConfig] = None):
     job = job or ScanJob(store)
+    auth = auth or AuthConfig()
+    throttle = A.Throttle()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "daxlin-workspace"
@@ -103,9 +148,11 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
 
         # -- plumbing -----------------------------------------------------
 
-        def _send(self, status: int, body: bytes, content_type: str):
+        def _send(self, status: int, body: bytes, content_type: str, extra=()):
             self.send_response(status)
             for name, value in HEADERS.items():
+                self.send_header(name, value)
+            for name, value in extra:
                 self.send_header(name, value)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -113,9 +160,51 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if self.command != "HEAD":
                 self.wfile.write(body)
 
-        def _json(self, status: int, payload):
+        def _json(self, status: int, payload, extra=()):
             self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                       "application/json; charset=utf-8")
+                       "application/json; charset=utf-8", extra)
+
+        # -- who is asking ---------------------------------------------------
+
+        def _cookie(self) -> str:
+            jar = SimpleCookie()
+            try:
+                jar.load(self.headers.get("Cookie") or "")
+            except Exception:
+                return ""
+            return jar[COOKIE].value if COOKIE in jar else ""
+
+        def _identify(self):
+            """(account or None, signed): signed means the name comes from a sign-in, not from the page."""
+            header = (self.headers.get("Authorization") or "").strip()
+            if header.lower().startswith("bearer "):
+                found = A.token_account(store, header[7:].strip())
+                return found, found is not None
+            if auth.mode == "none":
+                return dict(A.LOCAL_ADMIN), False
+            if auth.mode == "local":
+                found = A.session_account(store, self._cookie())
+                return found, found is not None
+            if self.client_address[0] not in auth.trusted_proxies:
+                return None, False
+            if auth.mode == "iis":
+                handle = (self.headers.get(A.IIS_TOKEN_HEADER) or "").strip()
+                if not re.fullmatch(r"[0-9A-Fa-f]{1,16}", handle):
+                    return None, False
+                try:
+                    name = (auth.token_resolver or A.iis_token_user)(handle)
+                except OSError:
+                    return None, False
+            else:
+                name = (self.headers.get(auth.user_header) or "").strip()
+            if name:
+                found = A.windows_account(store, name, auth.default_role)
+                return found, found is not None
+            return None, False
+
+        def _session_cookie(self, token: str, max_age: int) -> tuple:
+            flags = f"; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}" + ("; Secure" if auth.secure_cookies else "")
+            return ("Set-Cookie", f"{COOKIE}={token}{flags}")
 
         def _host_ok(self) -> bool:
             return (self.headers.get("Host") or "").strip().lower() in allowed_hosts
@@ -133,12 +222,17 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
                 raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too large")
+            if getattr(self, "_parsed", None) is not None:
+                return self._parsed
             try:
                 data = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "not valid JSON") from None
             if not isinstance(data, dict):
                 raise ApiError(HTTPStatus.BAD_REQUEST, "send a JSON object")
+            if getattr(self, "signed", False):
+                data["by"] = A.name_of(self.who)  # a signed-in name, not whatever the page says
+            self._parsed = data
             return data
 
         # -- methods ------------------------------------------------------
@@ -152,6 +246,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return self._send(HTTPStatus.OK, _static(name), content_type)
             if not parts.path.startswith("/api/"):
                 return self._send(HTTPStatus.NOT_FOUND, b"not found\n", "text/plain; charset=utf-8")
+            self.who, self.signed = self._identify()
+            if parts.path == "/api/session":
+                return self._json(HTTPStatus.OK, self._session())
+            if self.who is None:
+                return self._json(HTTPStatus.UNAUTHORIZED, {"error": "sign in first", "signin": auth.mode})
+            if parts.path.startswith("/api/admin/") and A.rank(self.who["role"]) < A.rank("admin"):
+                return self._json(HTTPStatus.FORBIDDEN, {"error": "only an admin can see this"})
             self._api(lambda: self._get(parts.path, parse_qs(parts.query)))
 
         do_HEAD = do_GET
@@ -161,9 +262,76 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return self._send(HTTPStatus.MISDIRECTED_REQUEST, b"unknown host\n", "text/plain; charset=utf-8")
             if not self._origin_ok():
                 return self._json(HTTPStatus.FORBIDDEN, {"error": "request from another site refused"})
+            path = urlsplit(self.path).path
+            self._parsed = None
+            self.who, self.signed = self._identify()
+            if path == "/api/login":
+                return self._login()
+            if path == "/api/logout":
+                A.sign_out(store, self._cookie())
+                return self._json(HTTPStatus.OK, {"ok": True}, [self._session_cookie("", 0)])
             if read_only:
                 return self._json(HTTPStatus.FORBIDDEN, {"error": "this workspace is read-only"})
-            self._api(lambda: self._post(urlsplit(self.path).path))
+            if self.who is None:
+                return self._json(HTTPStatus.UNAUTHORIZED, {"error": "sign in first", "signin": auth.mode})
+            try:
+                body = self._body()
+            except ApiError as err:
+                return self._json(err.status, {"error": str(err)})
+            need = required_role(path, body)
+            if A.rank(self.who["role"]) < A.rank(need):
+                A.audit(store, self.who, "denied", path, {"needs": need}, self.client_address[0])
+                return self._json(HTTPStatus.FORBIDDEN, {"error": f"this needs the {need} role; you are {self.who['role']}"})
+            refusal = self._refuse_own_approval(path, body)
+            if refusal:
+                return self._json(HTTPStatus.FORBIDDEN, {"error": refusal})
+            status = self._api(lambda: self._post(path))
+            if status < 400 and not path.endswith("/preview"):  # a preview changes nothing
+                action, target = action_name(path)
+                A.audit(store, self.who, action, target, body, self.client_address[0])
+
+        def _refuse_own_approval(self, path: str, body: dict) -> str:
+            """Someone else approves a change, and only its author or a reviewer cancels it."""
+            match = re.fullmatch(r"/api/changes/(\d+)/decision", path)
+            if not match or not self.signed:
+                return ""
+            request = change_requests.get(store, int(match.group(1)))
+            if request is None:
+                return ""
+            mine = request["created_by"] in (self.who["username"], A.name_of(self.who))
+            if body.get("status") == "approved" and mine and not auth.allow_self_approval:
+                return "you proposed this change: someone else must approve it"
+            if body.get("status") == "cancelled" and not mine and A.rank(self.who["role"]) < A.rank("reviewer"):
+                return "only its author or a reviewer can cancel a change"
+            return ""
+
+        def _session(self) -> dict:
+            who = self.who
+            return {"mode": auth.mode, "signed_in": who is not None and (self.signed or auth.mode == "none"),
+                    "user": ({"username": who["username"], "display_name": who["display_name"], "role": who["role"]}
+                             if who else None),
+                    "read_only": read_only, "allow_self_approval": auth.allow_self_approval or auth.mode == "none"}
+
+        def _login(self):
+            if auth.mode != "local":
+                return self._json(HTTPStatus.BAD_REQUEST, {"error": "this workspace does not use passwords"})
+            try:
+                body = self._body()
+            except ApiError as err:
+                return self._json(err.status, {"error": str(err)})
+            username, address = str(body.get("username", "")), self.client_address[0]
+            if throttle.blocked(username, address):
+                A.audit(store, {"username": username}, "sign-in.blocked", "", None, address)
+                return self._json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "too many failed attempts: wait 15 minutes"})
+            result = A.sign_in(store, username, str(body.get("password", "")), auth.session_hours)
+            if result is None:
+                throttle.failed(username, address)
+                A.audit(store, {"username": username}, "sign-in.failed", "", None, address)
+                return self._json(HTTPStatus.UNAUTHORIZED, {"error": "wrong name or password"})
+            token, who = result
+            throttle.cleared(username)
+            A.audit(store, who, "sign-in", "", None, address)
+            return self._json(HTTPStatus.OK, {"user": who}, [self._session_cookie(token, auth.session_hours * 3600)])
 
         def _refuse(self):
             self._send(HTTPStatus.METHOD_NOT_ALLOWED, b"not allowed\n", "text/plain; charset=utf-8")
@@ -184,6 +352,7 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             except ValueError as err:
                 status, payload = HTTPStatus.BAD_REQUEST, {"error": str(err)}
             self._json(status, payload)
+            return int(status)
 
         # -- routes -------------------------------------------------------
 
@@ -212,6 +381,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return HTTPStatus.OK, standards_check.standards(store)
             if path == "/api/standards/owner":
                 return HTTPStatus.OK, standards_check.owner_findings(store, one("name"))
+            if path == "/api/admin/users":
+                return HTTPStatus.OK, A.accounts(store)
+            if path == "/api/admin/audit":
+                return HTTPStatus.OK, A.audit_log(store, int(one("limit", "200") or 200), one("user"), one("action"))
+            if path == "/api/account":
+                tokens = A.tokens(store, self.who["username"]) if self.signed else []
+                return HTTPStatus.OK, {"user": self.who, "tokens": tokens, "mode": auth.mode}
             if path == "/api/changes/ready":
                 return HTTPStatus.OK, {"changes": change_requests.ready(store)}
             if path == "/api/changes":
@@ -263,6 +439,32 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                                        str(body.get("note", "")), str(body.get("decision", "")),
                                        str(body.get("by", "")))
                 return HTTPStatus.OK, saved
+            if path == "/api/admin/users":
+                body = self._body()
+                username = str(body.get("username", ""))
+                if body.get("create"):
+                    made = A.add_account(store, username, str(body.get("role") or "viewer"),
+                                         str(body.get("display_name") or ""), body.get("password") or None)
+                    return HTTPStatus.OK, {k: made[k] for k in ("username", "display_name", "role")}
+                changed = A.update_account(store, username, body.get("role"), body.get("display_name"),
+                                           body.get("password") or None, body.get("disabled"))
+                return HTTPStatus.OK, {k: changed[k] for k in ("username", "display_name", "role", "disabled")}
+            if path.startswith("/api/account/"):
+                if not self.signed:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "this workspace has no sign-in, so there is no account")
+                body = self._body()
+                if path == "/api/account/password":
+                    if auth.mode != "local":
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "passwords are not used here")
+                    mine = A.account(store, self.who["username"])
+                    if not A.check_password(str(body.get("old_password", "")), mine["password_hash"]):
+                        raise ApiError(HTTPStatus.FORBIDDEN, "the current password is wrong")
+                    A.update_account(store, self.who["username"], password=str(body.get("new_password", "")))
+                    return HTTPStatus.OK, {"ok": True}
+                if path == "/api/account/tokens":
+                    return HTTPStatus.OK, {"token": A.create_token(store, self.who["username"], str(body.get("name", "")))}
+                if path == "/api/account/tokens/revoke":
+                    return HTTPStatus.OK, {"revoked": A.revoke_token(store, str(body.get("prefix", "")), self.who["username"])}
             if path in ("/api/changes", "/api/changes/preview"):
                 body = self._body()
                 items = body.get("items")
@@ -334,33 +536,47 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
 
 
 def make_server(store: Store, host: str = "127.0.0.1", port: int = 8766, quiet: bool = False, allow_hosts=(),
-                read_only: bool = False, job=None) -> ThreadingHTTPServer:
+                read_only: bool = False, job=None, auth: Optional[AuthConfig] = None) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), None)
     bound = server.server_address[1]
     names = {f"{h}:{bound}" for h in LOOPBACK} | {f"{host}:{bound}".lower()}
     for extra in allow_hosts:
         extra = extra.strip().lower()
         names |= {extra} if ":" in extra else {extra, f"{extra}:{bound}", f"{extra}:80", f"{extra}:443"}
-    server.RequestHandlerClass = make_handler(store, names, read_only, quiet, job)
+    server.RequestHandlerClass = make_handler(store, names, read_only, quiet, job, auth)
     return server
 
 
 def serve(store: Store, host: str = "127.0.0.1", port: int = 8766, open_browser: bool = True, quiet: bool = False,
-          allow_hosts=(), read_only: bool = False, scan_every: int = 0) -> int:
+          allow_hosts=(), read_only: bool = False, scan_every: int = 0, auth: Optional[AuthConfig] = None) -> int:
+    auth = auth or AuthConfig()
+    if host not in LOOPBACK and auth.mode == "none" and not read_only:
+        print(f"Refusing to listen on {host} without sign-in: anyone on the network could change notes and approve\n"
+              f"changes. Use --auth local (workspace passwords) or --auth windows (behind IIS), or --read-only.",
+              file=sys.stderr)
+        return 2
+    if auth.mode == "local" and not A.accounts(store):
+        print("No accounts yet. Create the first admin:\n  daxlin workspace users add NAME --role admin --password",
+              file=sys.stderr)
+        return 2
     job = ScanJob(store)
     standards_check.ensure_checked(store)  # versions scanned before the standards existed
     try:
-        server = make_server(store, host, port, quiet, allow_hosts, read_only, job)
+        server = make_server(store, host, port, quiet, allow_hosts, read_only, job, auth)
     except OSError as err:
         print(f"Cannot listen on {host}:{port} ({err.strerror or err}). Another program may be using that port: "
               f"try --port {port + 1}.", file=sys.stderr)
         return 1
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_address[1]}/"
-    print(f"Power BI workspace on {url}  (database: {store.path})", file=sys.stderr)
-    if host not in LOOPBACK:
-        print(f"  warning: listening on {host}. There are no sign-ins yet, so anyone who can reach this address\n"
-              f"  can read the catalogue{'' if read_only else ' and add notes'}. Put it behind a proxy that signs "
-              f"people in, or use --read-only.", file=sys.stderr)
+    print(f"Power BI workspace on {url}  (database: {store.location})", file=sys.stderr)
+    sign_in = {"none": "no sign-in (this PC only)", "local": "workspace accounts with passwords",
+               "iis": "Windows sign-in by IIS (HttpPlatformHandler forwards each user's token)",
+               "windows": f"Windows sign-in through the proxy at {', '.join(auth.trusted_proxies)} "
+                          f"(header {auth.user_header})"}[auth.mode]
+    print(f"  sign-in: {sign_in}", file=sys.stderr)
+    if auth.mode == "local" and host not in LOOPBACK and not auth.secure_cookies:
+        print("  warning: passwords travel in clear text unless a proxy in front adds HTTPS; then add --secure-cookies",
+              file=sys.stderr)
     if scan_every:
         stop = threading.Event()
 
