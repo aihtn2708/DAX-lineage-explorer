@@ -79,6 +79,7 @@ function table(columns, rows, empty) {
 async function homeView() {
   const [summary, models] = await Promise.all([api("/api/summary"), api("/api/models")]);
   summaryCache = summary;
+  updateReviewNav();
   const run = summary.last_run;
   const scanButton = h("button", { class: "primary", disabled: summary.read_only || summary.scan.running, onclick: startScan },
     summary.scan.running ? "Scanning…" : "Scan now");
@@ -93,6 +94,7 @@ async function homeView() {
       tile(summary.measures, "measures"),
       tile(summary.unused_measures, "unused measures", summary.unused_measures > 0),
       tile(summary.broken_refs, "visual fields missing from the model", summary.broken_refs > 0),
+      tile(summary.pending_reviews, "versions waiting for review"),
       tile(summary.decisions.remove, "marked to remove"),
       tile(summary.with_problems, "files with read problems", summary.with_problems > 0)),
     h("div", { class: "bar" },
@@ -221,7 +223,8 @@ async function modelView(id, params) {
           h("div", { class: "bar" }, h("button", { class: "primary", onclick: save, disabled: readOnly }, "Save"), saved)),
         h("h2", {}, `Versions (${m.history.length})`),
         h("ul", { class: "plain panel" }, m.history.map((v) => h("li", {},
-          h("b", {}, `v${v.number}`), ` saved ${fmtDate(v.file_modified_at)}`,
+          h("a", { href: `#/version/${v.id}` }, h("b", {}, `v${v.number}`)), ` saved ${fmtDate(v.file_modified_at)}  `,
+          v.review === "baseline" ? null : reviewBadge(v.review),
           h("div", { class: "muted small" }, v.status === "ok"
             ? `${n(v.measures)} measures, ${n(v.visuals)} visuals, ${n(v.unused_measures)} unused`
             : v.note))))),
@@ -317,7 +320,8 @@ async function objectView(id) {
           h("div", { class: "muted small" }, "Notes follow this object through renames and new versions.")),
         h("h2", {}, "History"),
         h("ul", { class: "plain panel" }, changes.map((v) => h("li", {},
-          h("a", { href: `#/object/${v.id}` }, `v${v.version}`), ` ${fmtDate(v.file_modified_at)}`,
+          h("a", { href: `#/object/${v.id}` }, `v${v.version}`), ` ${fmtDate(v.file_modified_at)}  `,
+          h("a", { href: `#/version/${v.version_id}`, class: "small" }, "what changed"),
           h("div", { class: "muted small" }, v.what)))),
         o.history.length > changes.length ? h("p", { class: "muted small" }, `Unchanged in ${o.history.length - changes.length} other version(s).`) : null),
     ),
@@ -344,6 +348,190 @@ async function decisionsView(params) {
   );
 }
 
+
+// -- milestone 2: review ------------------------------------------------------
+
+const REVIEW = { pending: "waiting for review", approved: "approved", changes_requested: "changes requested",
+  baseline: "first version", unreadable: "could not be read" };
+const reviewBadge = (state) => h("span", { class: `badge ${state}` }, REVIEW[state] || state);
+const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+const FIELD_NAMES = { table_name: "home table", description: "description", display_folder: "display folder",
+  format_string: "format string", data_type: "data type", is_hidden: "hidden", state: "state" };
+
+function updateReviewNav() {
+  const link = document.getElementById("reviewNav");
+  const count = summaryCache ? summaryCache.pending_reviews : 0;
+  link.replaceChildren("Review", count ? h("span", { class: "count", title: `${count} waiting` }, count) : "");
+}
+
+function changeSummary(c) {
+  if (!c || c.total === undefined) return h("span", { class: "muted" }, "–");
+  if (!c.total) return h("span", { class: "muted" }, "no changes");
+  const parts = [];
+  if (c.broken) parts.push(h("b", { class: "err" }, `${c.broken} broken`));
+  if (c.dax) parts.push(`${c.dax} DAX`);
+  if (c.renamed) parts.push(`${c.renamed} renamed`);
+  if (c.added) parts.push(`${c.added} added`);
+  if (c.removed) parts.push(`${c.removed} removed`);
+  const other = c.edited - c.dax - c.follow_renames - c.formatting;
+  if (other > 0) parts.push(`${other} edited`);
+  if (c.formatting) parts.push(`${c.formatting} formatting`);
+  if (c.visuals) parts.push(plural(c.visuals, "visual"));
+  return parts.flatMap((p, i) => (i ? [", ", p] : [p]));
+}
+
+async function reviewQueueView(params) {
+  const status = params.get("status") || "pending";
+  const rows = await api(`/api/reviews?status=${encodeURIComponent(status)}`);
+  const tab = (value, text) => h("a", { href: `#/review?status=${value}` }, status === value ? h("b", {}, text) : text);
+  show(
+    h("h1", {}, "Review"),
+    h("p", { class: "sub" }, "Every saved version of a model, compared with the one before. Open one to see what changed, comment, and approve it."),
+    h("div", { class: "bar" }, tab("pending", "Waiting"), " · ", tab("changes_requested", "Changes requested"), " · ",
+      tab("approved", "Approved"), " · ", tab("all", "All")),
+    table([
+      { label: "Model", cell: (r) => h("a", { href: `#/version/${r.id}` }, r.model_name) },
+      { label: "Version", num: true, cell: (r) => `v${r.number}` },
+      { label: "Saved", cell: (r) => fmtDate(r.file_modified_at) },
+      { label: "What changed", cell: (r) => changeSummary(r.changes) },
+      { label: "Comments", num: true, cell: (r) => r.comments || "" },
+      { label: "Review", cell: (r) => [reviewBadge(r.review), r.reviewer ? h("div", { class: "muted small" }, `${r.reviewer}, ${fmtDate(r.decided_at)}`) : null] },
+    ], rows, status === "pending" ? "Nothing waiting. New versions appear here after a scan." : "None."),
+  );
+}
+
+function diffBlock(dax) {
+  return h("pre", { class: "diff" }, dax.lines.map((l) => h("span", { class: l.op === "+" ? "add" : l.op === "-" ? "del" : "same" }, l.text || " ")));
+}
+
+async function versionView(id, params) {
+  const against = params.get("against");
+  const r = await api(`/api/versions/${id}${against ? `?against=${encodeURIComponent(against)}` : ""}`);
+  const v = r.version;
+  const readOnly = summaryCache ? summaryCache.read_only : false;
+  const comments = r.comments;
+  const byObject = (key) => comments.filter((c) => c.object_key === key && c.kind === "comment");
+
+  const by = h("input", { value: me(), placeholder: "your name" });
+  const say = h("span", { class: "small" });
+  const post = async (path, body) => {
+    setMe(by.value);
+    try {
+      await api(path, { ...body, by: by.value });
+      summaryCache = await api("/api/summary");
+      updateReviewNav();
+      await versionView(id, params);
+    } catch (err) {
+      say.className = "err small";
+      say.textContent = err.message;
+    }
+  };
+
+  const thread = (items) => h("div", { class: "thread" }, items.map((c) => h("div", { class: `msg ${c.kind}` },
+    h("div", { class: "who" }, c.kind === "comment" ? "" : [reviewBadge(c.kind), " "], c.author || "someone", " · ", fmtDate(c.created_at)),
+    c.body ? h("p", {}, c.body) : null)));
+
+  const commentBox = (key) => {
+    const area = h("textarea", { placeholder: key ? "Comment on this change" : "A comment on the whole version" });
+    return h("div", { class: "form" }, area,
+      h("div", {}, h("button", { disabled: readOnly, onclick: () => post(`/api/versions/${id}/comments`, { body: area.value, object_key: key || "" }) }, "Comment")));
+  };
+
+  const objectCard = (item, body) => {
+    const own = byObject(item.key);
+    const toggle = h("details", {}, h("summary", {}, own.length ? plural(own.length, "comment") : "Comment"), thread(own), commentBox(item.key));
+    if (own.length) toggle.open = true;
+    return h("div", { class: "change" },
+      h("div", { class: "change-head" }, kindTag(item.kind), item.id ? h("a", { href: `#/object/${item.id}` }, h("b", {}, item.label)) : h("b", {}, item.label),
+        h("span", { class: "grow" }), item.impact ? h("span", { class: "muted small" }, `feeds ${plural(item.impact, "visual")}`) : null),
+      body, toggle);
+  };
+
+  const section = (title, items, render, open = true) => (items.length
+    ? (open ? [h("h2", {}, `${title} (${items.length})`), items.map(render)]
+      : h("details", {}, h("summary", {}, `${title} (${items.length})`), items.map(render)))
+    : null);
+
+  const daxEdits = r.edited.filter((e) => e.changes.includes("DAX") && !e.dax.formatting_only && !e.follows_rename);
+  const followUps = r.edited.filter((e) => e.follows_rename);
+  const formatting = r.edited.filter((e) => e.changes.includes("DAX") && e.dax.formatting_only);
+  const props = r.edited.filter((e) => e.changes.some((c) => c !== "DAX"));
+  const c = r.counts || {};
+  const vis = r.visuals;
+
+  const compareSelect = h("select", { onchange: (e) => { location.hash = `#/version/${id}${e.target.value ? `?against=${e.target.value}` : ""}`; } },
+    h("option", { value: "" }, "the previous version"),
+    r.versions.filter((x) => x.number < v.number && x.status !== "error").map((x) =>
+      h("option", { value: x.id, selected: r.against && String(x.id) === String(against) }, `v${x.number}, ${fmtDate(x.file_modified_at)}`)));
+
+  const left = r.baseline ? [h("div", { class: "empty" }, "The first version of this model: there is nothing earlier to compare it with.")]
+    : v.status === "error" ? [h("p", { class: "err" }, `This version could not be read: ${v.note}`)]
+      : [
+        h("div", { class: "tiles" },
+          tile(c.broken, "broken references", c.broken > 0), tile(c.dax, "DAX changes"), tile(c.renamed, "renamed"),
+          tile(c.added, "added"), tile(c.removed, "removed"), tile(c.visuals, "visuals changed")),
+        !c.total ? h("div", { class: "empty" }, "No change to measures, columns or visuals. Something else in the file changed, such as data or formatting.") : null,
+        section("Broken: used, but no longer in the model", r.broken, (b) => h("div", { class: "change" },
+          h("div", { class: "change-head" }, h("b", { class: "err" }, b.label)),
+          h("div", { class: "small" }, "Still used by: ", b.used_by.join(", ")))),
+        section("Renamed", r.renamed, (x) => objectCard(x, h("div", {}, h("span", { class: "was" }, x.old_label), "  →  ", h("b", {}, x.label),
+          x.guessed ? h("span", { class: "muted small" }, "  (probably: same DAX, no lineage tag)") : null))),
+        section("DAX changed", daxEdits, (e) => objectCard(e, [diffBlock(e.dax),
+          e.reads_added.length || e.reads_removed.length ? h("div", { class: "chips" },
+            e.reads_added.map((x) => h("span", { class: "chip add" }, `now reads ${x}`)),
+            e.reads_removed.map((x) => h("span", { class: "chip del" }, `no longer reads ${x}`))) : null])),
+        section("Removed", r.removed, (x) => objectCard(x, x.expression ? h("pre", {}, x.expression) : null)),
+        section("Added", r.added, (x) => objectCard(x, x.expression ? h("pre", {}, x.expression) : null)),
+        section("Other edits", props, (e) => objectCard(e, h("ul", { class: "plain" }, Object.keys(FIELD_NAMES)
+          .filter((k) => e.before[k] !== e.after[k]).map((k) => h("li", {}, `${FIELD_NAMES[k]}: `,
+            h("span", { class: "was" }, String(k === "is_hidden" ? (e.before[k] ? "yes" : "no") : e.before[k] || "(none)")), "  →  ",
+            String(k === "is_hidden" ? (e.after[k] ? "yes" : "no") : e.after[k] || "(none)")))))),
+        section("Usage", r.usage, (u) => objectCard(u, h("div", {}, u.became_unused ? h("b", { class: "err" }, "Now unused") : "Used again",
+          h("span", { class: "muted" }, `: was ${STATUS[u.before] || u.before}, now ${STATUS[u.after] || u.after}`)))),
+        vis.added.length || vis.removed.length || vis.changed.length ? [h("h2", {}, `Visuals (${vis.added.length + vis.removed.length + vis.changed.length})`),
+          table([
+            { label: "Page", cell: (x) => x.page },
+            { label: "Visual", cell: (x) => x.title },
+            { label: "Change", cell: (x) => (x.change === "added" ? h("span", { class: "chip add" }, "added") : x.change === "removed" ? h("span", { class: "chip del" }, "removed")
+              : h("div", { class: "chips" }, x.fields_added.map((f) => h("span", { class: "chip add" }, `+ ${f}`)),
+                x.fields_removed.map((f) => h("span", { class: "chip del" }, `− ${f}`)), x.roles_changed.map((f) => h("span", { class: "chip" }, `${f} moved`)))) },
+          ], [...vis.removed.map((x) => ({ ...x, change: "removed" })), ...vis.added.map((x) => ({ ...x, change: "added" })), ...vis.changed])] : null,
+        section("Only follow a rename", followUps, (e) => objectCard(e, diffBlock(e.dax)), false),
+        section("Formatting only", formatting, (e) => objectCard(e, diffBlock(e.dax)), false),
+      ];
+
+  const reviewable = !r.baseline && v.status !== "error";
+  const note = h("textarea", { placeholder: "Optional: what to fix, or why it is fine" });
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/review" }, "Review"), " › ", h("a", { href: `#/model/${v.model_id}` }, v.model_name), " › ", `v${v.number}`),
+    h("h1", {}, `${v.model_name} v${v.number} `, reviewBadge(v.review)),
+    h("p", { class: "sub" }, `Saved ${fmtDate(v.file_modified_at)}`, r.against ? ["  ·  compared with ", compareSelect] : null),
+    h("div", { class: "grid2" },
+      h("div", {}, left),
+      h("div", {},
+        reviewable ? [h("h2", {}, "Review"),
+          h("div", { class: "panel form" },
+            v.reviewer ? h("div", { class: "small" }, reviewBadge(v.review), `  by ${v.reviewer}, ${fmtDate(v.decided_at)}`) : null,
+            h("label", {}, "Your name", by),
+            h("label", {}, "Note", note),
+            h("div", { class: "buttons" },
+              h("button", { class: "good", disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "approved", note: note.value }) }, "Approve"),
+              h("button", { class: "bad", disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "changes_requested", note: note.value }) }, "Request changes"),
+              v.review !== "pending" ? h("button", { disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "pending", note: note.value }) }, "Reopen") : null),
+            say)] : null,
+        h("h2", {}, "Discussion"),
+        h("div", { class: "panel" },
+          comments.filter((x) => !x.object_key).length ? thread(comments.filter((x) => !x.object_key)) : h("p", { class: "muted small" }, "No comments yet."),
+          comments.some((x) => x.object_key) ? h("p", { class: "muted small" }, `${plural(comments.filter((x) => x.object_key).length, "comment")} on single changes, shown with them.`) : null,
+          reviewable ? commentBox("") : null),
+        h("h2", {}, "Other versions"),
+        h("ul", { class: "plain panel" }, r.versions.map((x) => h("li", {},
+          String(x.id) === String(id) ? h("b", {}, `v${x.number}`) : h("a", { href: `#/version/${x.id}` }, `v${x.number}`),
+          ` ${fmtDate(x.file_modified_at)}`, x.status === "error" ? h("span", { class: "err small" }, "  unreadable") : null)))),
+    ),
+  );
+}
+
 // -- routing ------------------------------------------------------------------
 
 async function route() {
@@ -352,11 +540,14 @@ async function route() {
   if (path !== "/search") document.getElementById("q").value = "";
   try {
     if (!summaryCache) summaryCache = await api("/api/summary");
+    updateReviewNav();
     let match;
     if ((match = path.match(/^\/model\/(\d+)$/))) await modelView(match[1], params);
     else if ((match = path.match(/^\/object\/(\d+)$/))) await objectView(match[1]);
     else if (path === "/search") await searchView(params);
     else if (path === "/decisions") await decisionsView(params);
+    else if (path === "/review") await reviewQueueView(params);
+    else if ((match = path.match(/^\/version\/(\d+)$/))) await versionView(match[1], params);
     else await homeView();
   } catch (err) {
     show(h("h1", {}, "Something went wrong"), h("p", { class: "err" }, err.message));
