@@ -3,16 +3,16 @@
 See what every DAX measure in a Power BI, Fabric or Analysis Services model reads,
 and what reads it — from the output of one query, [`INFO.MEASURES()`](https://learn.microsoft.com/en-us/dax/info-measures-function-dax).
 
-**Live demo: https://aihtn2708.github.io/dax-lineage-explorer/** ·
-[open it with the sample model loaded](https://aihtn2708.github.io/dax-lineage-explorer/#sample) ·
-[download the sample workbook](https://aihtn2708.github.io/dax-lineage-explorer/samples/info_sample.xlsx)
+**Live demo: https://aihtn2708.github.io/DAX-lineage-explorer/** ·
+[open it with the sample model loaded](https://aihtn2708.github.io/DAX-lineage-explorer/#sample) ·
+[download the sample workbook](https://aihtn2708.github.io/DAX-lineage-explorer/samples/info_sample.xlsx)
 
 ![Tracing Sales YoY % back to the columns it reads](docs/assets/screenshot-trace.png)
 
 Two ways to use it, same rules and same results:
 
 - **In the browser** — export the query result to Excel and drop it on the
-  [demo page](https://aihtn2708.github.io/dax-lineage-explorer/). The file is read in your browser tab and
+  [demo page](https://aihtn2708.github.io/DAX-lineage-explorer/). The file is read in your browser tab and
   never uploaded. No install.
 - **From the command line** — `daxlin`, a zero-dependency Python package, for CI checks, scripted exports and
   Graphviz / Mermaid / JSON output.
@@ -51,7 +51,7 @@ headers may be `Name`, `[Name]` or `Measures[Name]`. A title line above the head
 
 ## 2. Build the page
 
-On the web: drop the workbook on the [demo page](https://aihtn2708.github.io/dax-lineage-explorer/), or
+On the web: drop the workbook on the [demo page](https://aihtn2708.github.io/DAX-lineage-explorer/), or
 paste the grid copied from DAX query view.
 
 From the command line, a self-contained page you can keep or send:
