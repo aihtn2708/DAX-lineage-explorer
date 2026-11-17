@@ -36,6 +36,8 @@ class Column:
     is_hidden: bool = False
     display_folder: str = ""
     lineage_tag: str = ""
+    sort_by_column_id: Optional[int] = None
+    sort_by_column: str = ""
 
     @property
     def is_calculated(self) -> bool:
@@ -123,11 +125,17 @@ class Catalogue:
         for rel in self.relationships:
             fc, tc = cols_by_id.get(rel.from_column_id), cols_by_id.get(rel.to_column_id)
             if fc is not None:
-                rel.from_column, rel.from_table = fc.name, fc.table_name or by_id.get(fc.table_id, "")
+                rel.from_column = rel.from_column or fc.name
+                rel.from_table = rel.from_table or fc.table_name or by_id.get(fc.table_id, "")
             if tc is not None:
-                rel.to_column, rel.to_table = tc.name, tc.table_name or by_id.get(tc.table_id, "")
+                rel.to_column = rel.to_column or tc.name
+                rel.to_table = rel.to_table or tc.table_name or by_id.get(tc.table_id, "")
             rel.from_table = rel.from_table or by_id.get(rel.from_table_id, "")
             rel.to_table = rel.to_table or by_id.get(rel.to_table_id, "")
+        for column in self.columns:
+            target = cols_by_id.get(column.sort_by_column_id) if column.sort_by_column_id is not None else None
+            if target is not None:
+                column.sort_by_column = target.name
         return self
 
     # -- lookups used while extracting references ---------------------------

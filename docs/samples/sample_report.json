@@ -1,0 +1,135 @@
+{
+ "id": 0,
+ "sections": [
+  {
+   "id": 0,
+   "name": "ReportSectionoverview",
+   "displayName": "Overview",
+   "ordinal": 0,
+   "filters": "[{\"name\": \"Filter0\", \"expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Date\"}}, \"Property\": \"Year\"}}, \"filter\": {\"Version\": 2, \"From\": [{\"Name\": \"d\", \"Entity\": \"Date\", \"Type\": 0}], \"Where\": [{\"Condition\": {\"Not\": {\"Expression\": {\"In\": {\"Expressions\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"d\"}}, \"Property\": \"Year\"}}], \"Values\": [[{\"Literal\": {\"Value\": \"null\"}}]]}}}}}]}, \"type\": \"Categorical\", \"howCreated\": 1}]",
+   "visualContainers": [
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Measures.Total Sales\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"m0\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m0\"}}, \"Property\": \"Total Sales\"}, \"Name\": \"Measures.Total Sales\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Net sales'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card2\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Measures.Gross Margin %\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"m0\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m0\"}}, \"Property\": \"Gross Margin %\"}, \"Name\": \"Measures.Gross Margin %\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Gross margin %'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card3\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Measures.Sales YoY %\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"m0\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m0\"}}, \"Property\": \"Sales YoY %\"}, \"Name\": \"Measures.Sales YoY %\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Growth on last year'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"line1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"lineChart\", \"projections\": {\"Category\": [{\"queryRef\": \"Date.Month\"}], \"Y\": [{\"queryRef\": \"Measures.Total Sales\"}, {\"queryRef\": \"Measures.Sales PY\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"d0\", \"Entity\": \"Date\", \"Type\": 0}, {\"Name\": \"m1\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"d0\"}}, \"Property\": \"Month\"}, \"Name\": \"Date.Month\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Total Sales\"}, \"Name\": \"Measures.Total Sales\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Sales PY\"}, \"Name\": \"Measures.Sales PY\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Sales by month'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"line2\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"lineChart\", \"projections\": {\"Category\": [{\"queryRef\": \"Sales.OrderDate.Variation.Date Hierarchy.Year\"}], \"Y\": [{\"queryRef\": \"Measures.Order Count\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"s0\", \"Entity\": \"Sales\", \"Type\": 0}, {\"Name\": \"m1\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"HierarchyLevel\": {\"Expression\": {\"Hierarchy\": {\"Expression\": {\"PropertyVariationSource\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s0\"}}, \"Name\": \"Variation\", \"Property\": \"OrderDate\"}}, \"Hierarchy\": \"Date Hierarchy\"}}, \"Level\": \"Year\"}, \"Name\": \"Sales.OrderDate.Variation.Date Hierarchy.Year\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Order Count\"}, \"Name\": \"Measures.Order Count\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Orders over time'\"}}}}}]}}}",
+     "filters": "[]"
+    }
+   ],
+   "config": "{}",
+   "width": 1280,
+   "height": 720
+  },
+  {
+   "id": 1,
+   "name": "ReportSectioncustomers",
+   "displayName": "Customers",
+   "ordinal": 1,
+   "filters": "[]",
+   "visualContainers": [
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"table1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"tableEx\", \"projections\": {\"Values\": [{\"queryRef\": \"Customer.CustomerName\"}, {\"queryRef\": \"Customer.Country\"}, {\"queryRef\": \"Customer.Sales per Customer\"}, {\"queryRef\": \"Measures.Order Count\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"c0\", \"Entity\": \"Customer\", \"Type\": 0}, {\"Name\": \"m1\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"CustomerName\"}, \"Name\": \"Customer.CustomerName\"}, {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"Country\"}, \"Name\": \"Customer.Country\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"Sales per Customer\"}, \"Name\": \"Customer.Sales per Customer\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Order Count\"}, \"Name\": \"Measures.Order Count\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Customer detail'\"}}}}}]}}}",
+     "filters": "[{\"name\": \"Filter0\", \"expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Customer\"}}, \"Property\": \"Segment\"}}, \"filter\": {\"Version\": 2, \"From\": [{\"Name\": \"c\", \"Entity\": \"Customer\", \"Type\": 0}], \"Where\": [{\"Condition\": {\"Not\": {\"Expression\": {\"In\": {\"Expressions\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c\"}}, \"Property\": \"Segment\"}}], \"Values\": [[{\"Literal\": {\"Value\": \"null\"}}]]}}}}}]}, \"type\": \"Categorical\", \"howCreated\": 1}]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"bar1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"clusteredBarChart\", \"projections\": {\"Category\": [{\"queryRef\": \"Customer.Segment\"}], \"Y\": [{\"queryRef\": \"Customer.Segment Share of Sales\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"c0\", \"Entity\": \"Customer\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"Segment\"}, \"Name\": \"Customer.Segment\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"Segment Share of Sales\"}, \"Name\": \"Customer.Segment Share of Sales\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Share by segment'\"}}}}}]}, \"objects\": {\"dataPoint\": [{\"properties\": {\"fill\": {\"solid\": {\"color\": {\"expr\": {\"FillRule\": {\"Input\": {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Measures\"}}, \"Property\": \"Gross Margin %\"}}, \"FillRule\": {\"linearGradient2\": {\"min\": {\"color\": {\"Literal\": {\"Value\": \"'#cde2fb'\"}}}, \"max\": {\"color\": {\"Literal\": {\"Value\": \"'#184f95'\"}}}}}}}}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"slicer1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"slicer\", \"projections\": {\"Values\": [{\"queryRef\": \"Customer.Country\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"c0\", \"Entity\": \"Customer\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"c0\"}}, \"Property\": \"Country\"}, \"Name\": \"Customer.Country\"}]}}}",
+     "filters": "[]"
+    }
+   ],
+   "config": "{}",
+   "width": 1280,
+   "height": 720
+  },
+  {
+   "id": 2,
+   "name": "ReportSectionproducts",
+   "displayName": "Products",
+   "ordinal": 2,
+   "filters": "[]",
+   "visualContainers": [
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"bar2\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"clusteredBarChart\", \"projections\": {\"Category\": [{\"queryRef\": \"Product.ProductName\"}], \"Y\": [{\"queryRef\": \"Measures.Total Sales\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"p0\", \"Entity\": \"Product\", \"Type\": 0}, {\"Name\": \"m1\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"p0\"}}, \"Property\": \"ProductName\"}, \"Name\": \"Product.ProductName\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Total Sales\"}, \"Name\": \"Measures.Total Sales\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Top products'\"}}}}}]}}}",
+     "filters": "[{\"name\": \"FilterTopN\", \"expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Product\"}}, \"Property\": \"ProductName\"}}, \"filter\": {\"Version\": 2, \"From\": [{\"Name\": \"subquery\", \"Expression\": {\"Subquery\": {\"Query\": {\"Version\": 2, \"From\": [{\"Name\": \"p\", \"Entity\": \"Product\", \"Type\": 0}, {\"Name\": \"m\", \"Entity\": \"Measures\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"p\"}}, \"Property\": \"ProductName\"}, \"Name\": \"field\"}], \"OrderBy\": [{\"Direction\": 2, \"Expression\": {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m\"}}, \"Property\": \"Total Sales\"}}}], \"Top\": 5}}}, \"Type\": 2}, {\"Name\": \"p\", \"Entity\": \"Product\", \"Type\": 0}], \"Where\": [{\"Condition\": {\"In\": {\"Expressions\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"p\"}}, \"Property\": \"ProductName\"}}], \"Table\": {\"SourceRef\": {\"Source\": \"subquery\"}}}}}]}, \"type\": \"TopN\"}]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"matrix1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"pivotTable\", \"projections\": {\"Rows\": [{\"queryRef\": \"Product.Category\"}], \"Values\": [{\"queryRef\": \"Measures.Gross Margin\"}, {\"queryRef\": \"Measures.Avg Category Margin %\"}, {\"queryRef\": \"Sum(Sales.Quantity)\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"p0\", \"Entity\": \"Product\", \"Type\": 0}, {\"Name\": \"m1\", \"Entity\": \"Measures\", \"Type\": 0}, {\"Name\": \"s2\", \"Entity\": \"Sales\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"p0\"}}, \"Property\": \"Category\"}, \"Name\": \"Product.Category\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Gross Margin\"}, \"Name\": \"Measures.Gross Margin\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"m1\"}}, \"Property\": \"Avg Category Margin %\"}, \"Name\": \"Measures.Avg Category Margin %\"}, {\"Aggregation\": {\"Expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s2\"}}, \"Property\": \"Quantity\"}}, \"Function\": 0}, \"Name\": \"Sum(Sales.Quantity)\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Margin by category'\"}}}}}]}}}",
+     "filters": "[]"
+    }
+   ],
+   "config": "{}",
+   "width": 1280,
+   "height": 720
+  }
+ ],
+ "config": "{\"version\": \"5.55\", \"themeCollection\": {}}",
+ "filters": "[{\"name\": \"Filter0\", \"expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Date\"}}, \"Property\": \"IsCurrentYear\"}}, \"filter\": {\"Version\": 2, \"From\": [{\"Name\": \"d\", \"Entity\": \"Date\", \"Type\": 0}], \"Where\": [{\"Condition\": {\"Not\": {\"Expression\": {\"In\": {\"Expressions\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"d\"}}, \"Property\": \"IsCurrentYear\"}}], \"Values\": [[{\"Literal\": {\"Value\": \"null\"}}]]}}}}}]}, \"type\": \"Categorical\", \"howCreated\": 1}]",
+ "layoutOptimization": 0,
+ "resourcePackages": []
+}

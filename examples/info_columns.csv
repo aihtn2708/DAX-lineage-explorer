@@ -1,24 +1,24 @@
-ID,TableID,ExplicitName,InferredName,Expression,Type,DataType,IsHidden,DisplayFolder,LineageTag
-101,1,OrderNumber,,,Data,String,False,,lt-c101
-102,1,OrderDate,,,Data,DateTime,False,,lt-c102
-103,1,ProductKey,,,Data,Int64,True,,lt-c103
-104,1,CustomerKey,,,Data,Int64,True,,lt-c104
-105,1,Quantity,,,Data,Int64,False,,lt-c105
-106,1,UnitPrice,,,Data,Decimal,False,,lt-c106
-107,1,DiscountPct,,,Data,Decimal,False,,lt-c107
-108,1,LineAmount,,Sales[Quantity] * Sales[UnitPrice] * ( 1 - Sales[DiscountPct] ),Calculated,Decimal,False,Derived,lt-c108
-109,1,LineCost,,Sales[Quantity] * RELATED ( Product[StandardCost] ),Calculated,Decimal,False,Derived,lt-c109
-201,2,Date,,,Data,DateTime,False,,lt-c201
-202,2,Year,,,Data,Int64,False,Calendar,lt-c202
-203,2,Quarter,,,Data,String,False,Calendar,lt-c203
-204,2,Month,,,Data,String,False,Calendar,lt-c204
-205,2,MonthNumber,,,Data,Int64,True,Calendar,lt-c205
-206,2,IsCurrentYear,,YEAR ( Date[Date] ) = YEAR ( TODAY () ),Calculated,Boolean,False,Calendar,lt-c206
-301,3,ProductKey,,,Data,Int64,True,,lt-c301
-302,3,ProductName,,,Data,String,False,,lt-c302
-303,3,Category,,,Data,String,False,,lt-c303
-304,3,StandardCost,,,Data,Decimal,False,,lt-c304
-401,4,CustomerKey,,,Data,Int64,True,,lt-c401
-402,4,CustomerName,,,Data,String,False,,lt-c402
-403,4,Country,,,Data,String,False,,lt-c403
-404,4,Segment,,,Data,String,False,,lt-c404
+ID,TableID,ExplicitName,InferredName,Expression,Type,DataType,IsHidden,DisplayFolder,SortByColumnID,LineageTag
+101,1,OrderNumber,,,Data,String,False,,,lt-c101
+102,1,OrderDate,,,Data,DateTime,False,,,lt-c102
+103,1,ProductKey,,,Data,Int64,True,,,lt-c103
+104,1,CustomerKey,,,Data,Int64,True,,,lt-c104
+105,1,Quantity,,,Data,Int64,False,,,lt-c105
+106,1,UnitPrice,,,Data,Decimal,False,,,lt-c106
+107,1,DiscountPct,,,Data,Decimal,False,,,lt-c107
+108,1,LineAmount,,Sales[Quantity] * Sales[UnitPrice] * ( 1 - Sales[DiscountPct] ),Calculated,Decimal,False,Derived,,lt-c108
+109,1,LineCost,,Sales[Quantity] * RELATED ( Product[StandardCost] ),Calculated,Decimal,False,Derived,,lt-c109
+201,2,Date,,,Data,DateTime,False,,,lt-c201
+202,2,Year,,,Data,Int64,False,Calendar,,lt-c202
+203,2,Quarter,,,Data,String,False,Calendar,,lt-c203
+204,2,Month,,,Data,String,False,Calendar,205,lt-c204
+205,2,MonthNumber,,,Data,Int64,True,Calendar,,lt-c205
+206,2,IsCurrentYear,,YEAR ( Date[Date] ) = YEAR ( TODAY () ),Calculated,Boolean,False,Calendar,,lt-c206
+301,3,ProductKey,,,Data,Int64,True,,,lt-c301
+302,3,ProductName,,,Data,String,False,,,lt-c302
+303,3,Category,,,Data,String,False,,,lt-c303
+304,3,StandardCost,,,Data,Decimal,False,,,lt-c304
+401,4,CustomerKey,,,Data,Int64,True,,,lt-c401
+402,4,CustomerName,,,Data,String,False,,,lt-c402
+403,4,Country,,,Data,String,False,,,lt-c403
+404,4,Segment,,,Data,String,False,,,lt-c404

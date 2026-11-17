@@ -132,7 +132,21 @@ def _bool(row: dict, *names: str) -> bool:
 
 
 def load_measures(path) -> list:
-    rows = read_rows(path)
+    measures = measures_from_rows(read_rows(path))
+    if not measures:
+        raise ValueError(
+            f"{Path(path).name}: no rows with a [Name] column. "
+            "Export the result of EVALUATE INFO.MEASURES() with its header row."
+        )
+    return measures
+
+
+def _normalised(rows) -> list:
+    return [{_header_key(k): v for k, v in row.items() if k is not None} for row in rows]
+
+
+def measures_from_rows(rows) -> list:
+    rows = _normalised(rows)
     measures = []
     for row in rows:
         name = _text(row, "Name", "MeasureName")
@@ -156,17 +170,16 @@ def load_measures(path) -> list:
                 lineage_tag=_text(row, "LineageTag"),
             )
         )
-    if not measures:
-        raise ValueError(
-            f"{Path(path).name}: no rows with a [Name] column. "
-            "Export the result of EVALUATE INFO.MEASURES() with its header row."
-        )
     return measures
 
 
 def load_tables(path) -> list:
+    return tables_from_rows(read_rows(path))
+
+
+def tables_from_rows(rows) -> list:
     out = []
-    for row in read_rows(path):
+    for row in _normalised(rows):
         name = _text(row, "Name", "TableName")
         if not name:
             continue
@@ -183,8 +196,12 @@ def load_tables(path) -> list:
 
 
 def load_columns(path) -> list:
+    return columns_from_rows(read_rows(path))
+
+
+def columns_from_rows(rows) -> list:
     out = []
-    for row in read_rows(path):
+    for row in _normalised(rows):
         name = _text(row, "ExplicitName", "InferredName", "Name", "ColumnName")
         if not name:
             continue
@@ -200,14 +217,20 @@ def load_columns(path) -> list:
                 is_hidden=_bool(row, "IsHidden"),
                 display_folder=_text(row, "DisplayFolder"),
                 lineage_tag=_text(row, "LineageTag"),
+                sort_by_column_id=_int(row, "SortByColumnID"),
+                sort_by_column=_text(row, "SortByColumn"),
             )
         )
     return out
 
 
 def load_relationships(path) -> list:
+    return relationships_from_rows(read_rows(path))
+
+
+def relationships_from_rows(rows) -> list:
     out = []
-    for row in read_rows(path):
+    for row in _normalised(rows):
         out.append(
             Relationship(
                 id=_int(row, "ID"),
@@ -217,9 +240,26 @@ def load_relationships(path) -> list:
                 to_column_id=_int(row, "ToColumnID"),
                 is_active=_bool(row, "IsActive"),
                 cross_filtering=_text(row, "CrossFilteringBehavior"),
+                from_table=_text(row, "FromTable"),
+                to_table=_text(row, "ToTable"),
+                from_column=_text(row, "FromColumn"),
+                to_column=_text(row, "ToColumn"),
             )
         )
     return out
+
+
+def catalogue_from_rows(found: dict) -> Catalogue:
+    """Build the catalogue from rows keyed by query: measures, tables, columns, relationships."""
+    measures = measures_from_rows(found.get("measures") or [])
+    if not measures:
+        raise ValueError("no INFO.MEASURES rows (Name and Expression columns)")
+    return Catalogue(
+        measures=measures,
+        tables=tables_from_rows(found.get("tables") or []),
+        columns=columns_from_rows(found.get("columns") or []),
+        relationships=relationships_from_rows(found.get("relationships") or []),
+    ).resolve()
 
 
 def load_catalogue(
@@ -397,8 +437,6 @@ def detect_kind(rows, label: str = ""):
 
 def load_workbook(path) -> Catalogue:
     """Load every INFO.* sheet of one .xlsx workbook."""
-    import tempfile
-
     sheets = [(n, m) for n, m in read_xlsx(path) if any(any(str(c).strip() for c in l) for l in m)]
     found: dict = {}
     for sheet_name, matrix in sheets:
@@ -409,11 +447,4 @@ def load_workbook(path) -> Catalogue:
             found[kind] = rows
     if "measures" not in found:
         raise ValueError(f"{Path(path).name}: no sheet with INFO.MEASURES rows (Name and Expression columns)")
-    # reuse the per-query loaders through a JSON round trip
-    paths = {}
-    with tempfile.TemporaryDirectory() as tmp:
-        for kind, rows in found.items():
-            target = Path(tmp) / f"{kind}.json"
-            target.write_text(json.dumps(rows, default=str), encoding="utf-8")
-            paths[f"{kind}_path"] = target
-        return load_catalogue(**paths)
+    return catalogue_from_rows(found)

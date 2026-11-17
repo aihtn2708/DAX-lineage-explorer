@@ -1,0 +1,48 @@
+{
+ "id": 0,
+ "sections": [
+  {
+   "id": 0,
+   "name": "ReportSectionsummary",
+   "displayName": "Summary",
+   "ordinal": 0,
+   "filters": "[]",
+   "visualContainers": [
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card1\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Sales.Revenue\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"s0\", \"Entity\": \"Sales\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s0\"}}, \"Property\": \"Revenue\"}, \"Name\": \"Sales.Revenue\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Revenue'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card2\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Sales.Revenue Net\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"s0\", \"Entity\": \"Sales\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s0\"}}, \"Property\": \"Revenue Net\"}, \"Name\": \"Sales.Revenue Net\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Net revenue'\"}}}}}]}}}",
+     "filters": "[]"
+    },
+    {
+     "x": 0,
+     "y": 0,
+     "z": 0,
+     "width": 300,
+     "height": 200,
+     "config": "{\"name\": \"card3\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 0, \"y\": 0, \"width\": 300, \"height\": 200}}], \"singleVisual\": {\"visualType\": \"card\", \"projections\": {\"Values\": [{\"queryRef\": \"Sales.Sales Target\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"s0\", \"Entity\": \"Sales\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s0\"}}, \"Property\": \"Sales Target\"}, \"Name\": \"Sales.Sales Target\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Against target'\"}}}}}]}}}",
+     "filters": "[]"
+    }
+   ],
+   "config": "{}",
+   "width": 1280,
+   "height": 720
+  }
+ ],
+ "config": "{\"version\": \"5.55\", \"themeCollection\": {}}",
+ "filters": "[]",
+ "layoutOptimization": 0,
+ "resourcePackages": []
+}

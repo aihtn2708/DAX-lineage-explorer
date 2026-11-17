@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DAX lineage explorer</title>
-<meta name="description" content="Upload the INFO.MEASURES() result of a Power BI or Analysis Services model as Excel or CSV and see the lineage of every DAX measure. Runs in your browser; nothing is uploaded.">
+<meta name="description" content="Upload the INFO.MEASURES() result of a Power BI model and its report to see the lineage of every DAX measure, where each one is used, and which are unused. Runs in your browser; nothing is uploaded.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='4' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='2' y='21' width='11' height='7' rx='2' fill='%23eb6834'/%3E%3Crect x='19' y='12.5' width='11' height='7' rx='3.5' fill='%232a78d6'/%3E%3Cpath d='M13 7.5C17 7.5 15 16 19 16M13 24.5C17 24.5 15 16 19 16' stroke='%23898781' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/app.css">
 </head>
@@ -12,7 +12,7 @@
 <header>
   <div class="brand">
     <h1 id="title">DAX lineage explorer</h1>
-    <span id="subtitle">See what every measure reads, and what reads it</span>
+    <span id="subtitle">See what every measure reads, what reads it, and which visuals use it</span>
   </div>
   <div class="stats" id="stats" hidden></div>
   <div class="actions">
@@ -26,22 +26,25 @@
 <section id="landing">
   <div class="landing-inner">
     <div class="lede">
-      <h2>Lineage for every DAX measure in a model, from one query.</h2>
+      <h2>Lineage for every DAX measure, down to the visuals that use it.</h2>
       <p>Run <code>EVALUATE INFO.MEASURES()</code> against a Power BI, Fabric or Analysis Services model,
-        export the result to Excel, and drop it here. You get a graph of what each measure reads,
-        what reads it, and the DAX behind it.</p>
+        export the result to Excel, and drop it here with the report. You get what each measure reads,
+        what reads it, every visual that uses it, and which measures nothing uses at all.</p>
     </div>
 
     <div class="drop" id="drop">
-      <h3>Drop your export here</h3>
-      <p><code>.xlsx</code>, <code>.csv</code>, <code>.tsv</code> or <code>.json</code>. Several files at once,
-        or one workbook with a sheet per query.</p>
+      <h3>Drop your export and report here</h3>
+      <p>Model: <code>.xlsx</code>, <code>.csv</code> or <code>.json</code> from the <code>INFO.*</code> queries.
+        Report: <code>.pbix</code>, <code>.pbit</code> or a PBIP folder. Drop them together.</p>
       <div class="row">
-        <label class="button primary">Choose files<input type="file" id="files" multiple accept=".xlsx,.xlsm,.csv,.tsv,.txt,.json" hidden></label>
+        <label class="button primary">Choose files<input type="file" id="files" multiple accept=".xlsx,.xlsm,.csv,.tsv,.txt,.json,.pbix,.pbit,.zip,.bim" hidden></label>
+        <label class="button">Choose a PBIP folder<input type="file" id="folder" webkitdirectory multiple hidden></label>
         <button data-sample="sample">Try the sample model</button>
         <button data-sample="sample-problems">Try a model with problems</button>
       </div>
-      <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere.</p>
+      <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere.
+        A .pbix is read in slices, so only its report layout is loaded, not the model data.</p>
+      <input type="file" id="addReportFile" multiple accept=".pbix,.pbit,.zip,.json,.bim" hidden>
     </div>
     <div class="error" id="error" hidden></div>
 
@@ -72,12 +75,26 @@
         </ul>
       </div>
       <div class="card">
+        <h4>3 · Add the report (optional)</h4>
+        <ul>
+          <li><b>.pbix</b>: the report only. Its model is binary, so drop it with the INFO export</li>
+          <li><b>.pbit</b> (File → Export → Power BI template): report and model in one file, drop it alone</li>
+          <li><b>PBIP</b>: pick or drop the project folder</li>
+        </ul>
+        <p style="margin-top:10px">"Unused" means unused in the reports you load. Other reports on the same
+          semantic model, Excel, paginated reports and RLS rules are not seen, so check before deleting.</p>
+      </div>
+      <div class="card">
         <h4>Downloads</h4>
         <div class="downloads">
           <a href="samples/info_sample.xlsx" download>info_sample.xlsx</a>
           <small>24 measures, 4 sheets: the shape to copy</small>
+          <a href="samples/sample_report.json" download>sample_report.json</a>
+          <small>the sample's report: 3 pages, 10 visuals, 11 unused measures</small>
           <a href="samples/info_sample_with_problems.xlsx" download>info_sample_with_problems.xlsx</a>
           <small>a cycle, a missing measure, a typo, an Error state</small>
+          <a href="samples/sample_report_with_problems.json" download>sample_report_with_problems.json</a>
+          <small>a visual that uses a measure the model no longer has</small>
           <a href="queries/info_measures.dax" download>info_measures.dax</a>
           <a href="queries/info_tables.dax" download>info_tables.dax</a>
           <a href="queries/info_columns.dax" download>info_columns.dax</a>
@@ -99,6 +116,7 @@
       <select id="tableFilter"><option value="">All tables</option></select>
       <select id="sort">
         <option value="model">Group by table, then folder</option>
+        <option value="usage">Group by usage (unused first)</option>
         <option value="folder">Group by display folder</option>
         <option value="depth">Sort by chain depth</option>
         <option value="used">Sort by times referenced</option>
@@ -109,6 +127,10 @@
         <label class="toggle"><input type="checkbox" id="showTables"> Tables</label>
         <label class="toggle"><input type="checkbox" id="showHidden" checked> Hidden</label>
         <label class="toggle"><input type="checkbox" id="showUnreferenced"> Unreferenced</label>
+      </div>
+      <div class="row" id="reportToggles">
+        <label class="toggle"><input type="checkbox" id="showVisuals" checked> Visuals</label>
+        <label class="toggle"><input type="checkbox" id="unusedOnly"> Unused only</label>
       </div>
       <div class="row">
         <label class="toggle"><input type="checkbox" id="focusOnly"> Focus: hide unrelated</label>
@@ -130,6 +152,7 @@
       <span><i style="background:var(--measure)"></i>Measure</span>
       <span><i style="background:var(--column)"></i>Column</span>
       <span><i style="background:var(--table)"></i>Table</span>
+      <span><i style="background:var(--visual)"></i>Visual</span>
       <span><i style="background:var(--measure);opacity:.45"></i>Reads (upstream)</span>
       <span><i style="background:var(--column);opacity:.45"></i>Read by (downstream)</span>
       <span><b class="depth">3</b> chain depth</span>
@@ -139,8 +162,10 @@
   <div class="detail" id="detail"></div>
 </main>
 
+<script src="js/zip.js"></script>
 <script src="js/lineage.js"></script>
 <script src="js/xlsx.js"></script>
+<script src="js/report.js"></script>
 <script src="js/viewer.js"></script>
 <script src="js/app.js"></script>
 </body>

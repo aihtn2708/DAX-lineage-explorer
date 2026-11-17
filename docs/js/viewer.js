@@ -32,7 +32,7 @@ function setData(data) {
   }
 }
 
-const KIND_COLOR = { measure: "var(--measure)", column: "var(--column)", table: "var(--table)" };
+const KIND_COLOR = { measure: "var(--measure)", column: "var(--column)", table: "var(--table)", visual: "var(--visual)" };
 const NODE_W = 182, NODE_H = 30, GAP_X = 96, GAP_Y = 13;
 
 const state = {
@@ -46,6 +46,8 @@ const state = {
   showTables: false,
   showHidden: true,
   showUnreferenced: false,
+  showVisuals: true,
+  unusedOnly: false,
   focusOnly: false,
   view: { x: 40, y: 40, k: 1 },
   positions: new Map(),
@@ -72,12 +74,15 @@ const downstreamOf = id => closure(id, IN);
 
 function renderHeader() {
   const s = DATA.stats;
+  const r = s.report;
+  const broken = r ? r.brokenVisualRefs.length : 0;
   const issues = s.cycles.length + s.unresolvedReferences.length + s.missingObjects;
   const tiles = [
     ["Measures", s.measures], ["Columns", s.columns], ["Tables", s.tables],
-    ["Dependencies", s.edges], ["Deepest chain", s.maxDepth],
-    ["Issues", issues, issues > 0]
+    ["Dependencies", s.edges], ["Deepest chain", s.maxDepth]
   ];
+  if (r) tiles.push(["Visuals", r.visuals], ["Unused measures", r.unusedMeasures.length]);
+  tiles.push(["Issues", issues, issues > 0]);
   $("stats").innerHTML = tiles.map(([label, value, alert]) =>
     `<div class="stat${alert ? " alert" : ""}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
   $("subtitle").textContent = DATA.meta.subtitle;
@@ -88,8 +93,25 @@ function renderHeader() {
   if (s.missingObjects) bits.push(`<b>${s.missingObjects} reference(s) to objects not in the export</b>`);
   if (s.unresolvedReferences.length)
     bits.push(`${s.unresolvedReferences.length} unresolved name(s): ${s.unresolvedReferences.slice(0, 6).map(esc).join(", ")}`);
+  if (broken) bits.push(`<b>${plural(broken, "visual field")} missing from the model</b><ul>${
+    r.brokenVisualRefs.slice(0, 5).map(b => `<li>${esc(b.visual)}: ${esc(b.field)}</li>`).join("")}</ul>`);
   if (!bits.length) bits.push(`Every reference resolved. ${esc(s.baseMeasures.length)} base measure(s) read the model directly.`);
+  if (r) {
+    const m = r.measures;
+    bits.push(`<div class="usage-summary"><b class="plain">Usage in ${esc(r.reports.join(", "))}</b>
+      <span>${m.visual} in visuals \u00B7 ${m.indirect} through other measures \u00B7
+        <a href="#" data-usage-jump>${m.unused + m.deadChain} unused</a></span>
+      <span class="row"><button id="csvUnused">Unused list (CSV)</button><button id="csvWhereUsed">Where-used (CSV)</button></span></div>`);
+  } else if (typeof window.onLineageAddReport === "function") {
+    bits.push(`<div class="usage-summary"><span>Add the report to find unused measures and see where each one is used.</span>
+      <span class="row"><button id="addReport">Add a report (.pbix, .pbit, PBIP)</button></span></div>`);
+  }
   $("issues").innerHTML = bits.join("<br>");
+  if ($("csvUnused")) $("csvUnused").onclick = exportUnused;
+  if ($("csvWhereUsed")) $("csvWhereUsed").onclick = exportWhereUsed;
+  if ($("addReport")) $("addReport").onclick = () => window.onLineageAddReport();
+  const jump = document.querySelector("[data-usage-jump]");
+  if (jump) jump.onclick = e => { e.preventDefault(); $("sort").value = "usage"; state.sort = "usage"; renderList(); };
 }
 
 /* ---------- sidebar list ---------- */
@@ -99,7 +121,10 @@ function listNodes() {
   return DATA.nodes.filter(n => {
     if (n.kind === "column" && !state.showColumns) return false;
     if (n.kind === "table" && !state.showTables) return false;
+    if (n.kind === "visual" && !state.showVisuals) return false;
     if (n.isHidden && !state.showHidden) return false;
+    if (state.unusedOnly && n.kind !== "visual" && !isUnused(n)) return false;
+    if (state.unusedOnly && n.kind === "visual") return false;
     if (state.table && n.table !== state.table && n.name !== state.table) return false;
     if (q && !(n.label.toLowerCase().includes(q) ||
                (n.description || "").toLowerCase().includes(q) ||
@@ -117,18 +142,22 @@ function depthMeta(n) {
 }
 
 function itemRow(n, indent) {
-  const used = (IN.get(n.id) || []).length;
+  const used = (IN.get(n.id) || []).filter(id => NODES.get(id).kind !== "visual").length;
   const meta = state.sort === "used"
     ? `<span class="depth" title="Read by ${used} other object${used === 1 ? "" : "s"}">${used}&times;</span>`
     : depthMeta(n);
-  // inside a table group the table name is already the heading
-  const label = indent && n.kind === "column" ? n.name : n.label;
+  // inside a table or page group that name is already the heading
+  const label = n.kind === "visual" ? (n.title || n.name) : indent && n.kind === "column" ? n.name : n.label;
+  const usageTag = isUnused(n)
+    ? `<span class="tag warn" title="${esc(usageSentence(n))}">unused</span>` : "";
+  const visualTag = n.kind === "visual" ? `<span class="tag">${esc(n.visualType)}</span>` : "";
   return `<button class="item${state.selected === n.id ? " sel" : ""}" data-id="${esc(n.id)}"
       title="${esc(n.label)}${n.description ? " — " + esc(n.description) : ""}" style="padding-left:${14 + indent * 14}px">
     <span class="dot" style="background:${KIND_COLOR[n.kind]}${n.exists ? "" : ";opacity:.4"}"></span>
     <span class="nm">${esc(label)}</span>
     ${n.isHidden ? `<span class="tag" title="Hidden in the model">hidden</span>` : ""}
-    ${meta}
+    ${usageTag}${visualTag}
+    ${n.kind === "visual" ? "" : meta}
   </button>`;
 }
 
@@ -140,13 +169,16 @@ const byKindThenName = (a, b) =>
 function renderModelTree(nodes) {
   const searching = !!state.query;
   const tables = new Map();
-  const tableOf = n => n.kind === "table" ? n.name : (n.table || (n.exists ? "(no table)" : "(not in the export)"));
+  const tableOf = n => n.kind === "visual" ? `\u0002${n.page}`
+    : n.kind === "table" ? n.name : (n.table || (n.exists ? "(no table)" : "(not in the export)"));
+  const pageOrder = new Map(nodes.filter(n => n.kind === "visual").map(n => [`\u0002${n.page}`, n.pageOrder]));
   for (const n of nodes) {
     const t = tableOf(n);
-    if (!tables.has(t)) tables.set(t, { folders: new Map(), items: [], measures: 0, columns: 0 });
+    if (!tables.has(t)) tables.set(t, { folders: new Map(), items: [], measures: 0, columns: 0, visuals: 0 });
     const group = tables.get(t);
     if (n.kind === "measure") group.measures++;
     if (n.kind === "column") group.columns++;
+    if (n.kind === "visual") group.visuals++;
     if (n.kind === "table") continue;
     const paths = (n.displayFolder || "").split(";").map(p => p.trim()).filter(Boolean);
     if (!paths.length) { group.items.push(n); continue; }
@@ -166,23 +198,27 @@ function renderModelTree(nodes) {
       const subKey = `${key}\\${name}`;
       const open = searching || !state.collapsed.has(subKey);
       html.push(`<button class="fgroup" data-key="${esc(subKey)}" style="padding-left:${14 + depth * 14}px" aria-expanded="${open}">
-        <span class="caret">${open ? "▾" : "▸"}</span><span class="folder-icon" aria-hidden="true"></span>${esc(name)}</button>`);
+        <span class="caret">${open ? "\u25BE" : "\u25B8"}</span><span class="folder-icon" aria-hidden="true"></span>${esc(name)}</button>`);
       if (open) folderHtml(sub, subKey, depth + 1, false);
     }
     if (!top) for (const n of folder.items.sort(byKindThenName)) html.push(itemRow(n, depth));
   };
   const order = [...tables.keys()].sort((a, b) =>
+    (a.startsWith("\u0002") - b.startsWith("\u0002")) ||
+    ((pageOrder.get(a) ?? 0) - (pageOrder.get(b) ?? 0)) ||
     (a.startsWith("(") - b.startsWith("(")) ||
     (tables.get(b).measures > 0) - (tables.get(a).measures > 0) || a.localeCompare(b));
   for (const t of order) {
     const g = tables.get(t);
     const key = `t\\${t}`;
     const open = searching || !state.collapsed.has(key);
+    const isPage = t.startsWith("\u0002");
     const counts = [g.measures && `${g.measures} measure${g.measures === 1 ? "" : "s"}`,
-                    g.columns && `${g.columns} column${g.columns === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+                    g.columns && `${g.columns} column${g.columns === 1 ? "" : "s"}`,
+                    g.visuals && `${g.visuals} visual${g.visuals === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
     html.push(`<button class="tgroup" data-key="${esc(key)}" aria-expanded="${open}">
-      <span class="caret">${open ? "▾" : "▸"}</span><span class="table-icon" aria-hidden="true"></span>
-      <span class="nm">${esc(t)}</span><span class="count">${counts}</span></button>`);
+      <span class="caret">${open ? "\u25BE" : "\u25B8"}</span><span class="${isPage ? "page-icon" : "table-icon"}" aria-hidden="true"></span>
+      <span class="nm">${isPage ? "Page: " : ""}${esc(isPage ? t.slice(1) : t)}</span><span class="count">${counts}</span></button>`);
     if (!open) continue;
     folderHtml(g, key, 1, true);
     for (const n of g.items.sort(byKindThenName)) html.push(itemRow(n, 1));
@@ -195,6 +231,24 @@ function renderList() {
   let body;
   if (state.sort === "model") {
     body = renderModelTree(nodes);
+  } else if (state.sort === "usage") {
+    if (!hasReport()) {
+      body = `<div class="empty">Usage needs the report: drop the .pbix, .pbit or PBIP folder with your export.</div>`;
+    } else {
+      const order = ["unused", "deadChain", "indirect", "structural", "visual"];
+      const titles = {
+        unused: "Unused", deadChain: "Read only by unused", indirect: "Used through measures",
+        structural: "Keys and sort-by", visual: "Used in visuals"
+      };
+      body = order.map(status => {
+        const items = nodes.filter(n => n.usage && n.usage.status === status && n.exists).sort(byKindThenName);
+        if (!items.length) return "";
+        const m = items.filter(n => n.kind === "measure").length, c = items.length - m;
+        return `<div class="group usage-group" title="${esc(USAGE_HELP[status])}"><span class="nm">${USAGE[status].icon} ${esc(titles[status])}</span>
+          <span class="count">${[m && plural(m, "measure"), c && plural(c, "column")].filter(Boolean).join(" · ")}</span></div>` +
+          items.map(n => itemRow(n, 0)).join("");
+      }).join("");
+    }
   } else if (state.sort === "folder") {
     // measures by display folder; columns by table, labelled so a folder and a
     // table that share a name never merge into one group
@@ -231,12 +285,22 @@ function visibleNodes() {
   let ids = DATA.nodes.filter(n => {
     if (n.kind === "column" && !state.showColumns) return false;
     if (n.kind === "table" && !state.showTables) return false;
+    if (n.kind === "visual" && !state.showVisuals) return false;
     if (n.isHidden && !state.showHidden) return false;
     if (!state.showUnreferenced && n.kind !== "measure" &&
         !(IN.get(n.id) || []).length && !(OUT.get(n.id) || []).length) return false;
     return true;
   }).map(n => n.id);
 
+  if (state.unusedOnly && hasReport()) {
+    // the unused measures and columns, and what they read
+    const keep = new Set();
+    for (const n of DATA.nodes) if (isUnused(n)) {
+      keep.add(n.id);
+      for (const id of OUT.get(n.id) || []) keep.add(id);
+    }
+    ids = ids.filter(id => keep.has(id));
+  }
   if (state.focusOnly && state.selected) {
     const keep = new Set([state.selected, ...upstreamOf(state.selected), ...downstreamOf(state.selected)]);
     ids = ids.filter(id => keep.has(id));
@@ -359,7 +423,7 @@ function render() {
     const n = NODES.get(id), p = positions.get(id);
     if (!p) continue;
     const color = KIND_COLOR[n.kind];
-    const radius = n.kind === "measure" ? 9 : n.kind === "table" ? 15 : 3;
+    const radius = n.kind === "measure" ? 9 : n.kind === "table" ? 15 : n.kind === "visual" ? 5 : 3;
     const dim = related && !related.has(id);
     const isSel = id === selected;
     const dash = !n.exists ? ' stroke-dasharray="4 3"' : n.isHidden ? ' stroke-dasharray="2 2"' : "";
@@ -370,7 +434,9 @@ function render() {
             fill="color-mix(in srgb, ${color} ${isSel ? 26 : 12}%, var(--surface-1))"
             stroke="${stroke}"${dash} stroke-width="${isSel ? 2.4 : 1.5}"></rect>
       <text x="11" y="${NODE_H / 2 + 4}" fill="var(--text-primary)">${esc(truncate(n.label, 27))}</text>
-      ${n.depth ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
+      ${isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
+            fill="var(--muted)" font-size="9.5">unused</text>` : ""}
+      ${n.depth && n.kind !== "visual" && !isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
             fill="var(--muted)" font-size="10">${n.depth}</text>` : ""}
     </g>`);
   }
@@ -460,6 +526,142 @@ function highlightDax(text) {
   return out;
 }
 
+/* ---------- where used ---------- */
+
+const hasReport = () => !!(DATA && DATA.stats && DATA.stats.report);
+const USAGE = {
+  visual:     { icon: "\u25CF", label: "In visuals", cls: "good" },
+  indirect:   { icon: "\u21B3", label: "Through other measures", cls: "" },
+  structural: { icon: "\u25C6", label: "Model structure", cls: "" },
+  deadChain:  { icon: "\u26A0", label: "Unused (feeds only unused)", cls: "warn" },
+  unused:     { icon: "\u26A0", label: "Unused", cls: "warn" }
+};
+const USAGE_HELP = {
+  unused: "Nothing in the model or the loaded report reads it.",
+  deadChain: "Only measures that are themselves unused read it.",
+  indirect: "No visual uses it directly, but a measure that a visual uses depends on it.",
+  structural: "Nothing reads it, but it is a relationship key or the sort-by column of another column.",
+  visual: "A visual, slicer or filter in the loaded report uses it directly."
+};
+const isUnused = n => !!(n.usage && (n.usage.status === "unused" || n.usage.status === "deadChain"));
+const plural = (k, word) => `${k} ${word}${k === 1 ? "" : "s"}`;
+const edgeRoles = (from, to) => {
+  const e = EDGES.find(x => x.source === from && x.target === to);
+  return (e && e.roles) || [];
+};
+
+function usageChip(n) {
+  if (!n.usage) return "";
+  const u = USAGE[n.usage.status];
+  return `<span class="badge usage ${u.cls}"><span aria-hidden="true">${u.icon}</span> ${esc(u.label)}</span>`;
+}
+
+function usageSentence(n) {
+  const u = n.usage;
+  const pages = new Set(u.visuals.map(id => NODES.get(id).page)).size;
+  switch (u.status) {
+    case "visual": return `Used directly by ${plural(u.visuals.length, "visual")} on ${plural(pages, "page")}` +
+      (u.via.length ? `, and by ${plural(u.via.length, "more visual")} through other measures.` : ".");
+    case "indirect": return `No visual uses it directly, but ${plural(u.via.length, "visual")} depend on it through other measures. Removing it would break them.`;
+    case "structural": return `Nothing reads it, but the model needs it: ${u.structural.map(esc).join("; ")}.`;
+    case "deadChain": return "Only measures that are themselves unused read it. It and that chain can go together.";
+    default: return "No visual, filter or measure in the loaded report reads it.";
+  }
+}
+
+function whereUsedHtml(n) {
+  if (n.kind !== "measure" && n.kind !== "column") return "";
+  if (!hasReport()) {
+    return typeof window.onLineageAddReport === "function"
+      ? `<h3>Where used</h3><p>Drop the report too (<b>.pbix</b>, <b>.pbit</b> or a PBIP folder) to see which visuals use this ${n.kind}.</p>`
+      : `<h3>Where used</h3><p>Build the page with <code>--report</code> (a .pbix, .pbit or PBIP folder) to see which visuals use this ${n.kind}.</p>`;
+  }
+  const u = n.usage;
+  if (!u) return "";
+  const byPage = new Map();
+  for (const id of u.visuals) {
+    const v = NODES.get(id);
+    if (!byPage.has(v.page)) byPage.set(v.page, []);
+    byPage.get(v.page).push(v);
+  }
+  const visualRow = (v, note) => `<button class="link" data-id="${esc(v.id)}">
+      <span class="dot" style="width:8px;height:8px;border-radius:2px;background:var(--visual)"></span>
+      <span class="nm">${esc(v.title || v.name)}<small> ${esc(v.visualType)}${note ? " \u00B7 " + note : ""}</small></span></button>`;
+  const direct = [...byPage.entries()].sort((a, b) => (NODES.get(a[1][0].id).pageOrder) - (NODES.get(b[1][0].id).pageOrder))
+    .map(([page, visuals]) => `<div class="page-name">${esc(page)}</div>` +
+      visuals.map(v => visualRow(v, edgeRoles(v.id, n.id).map(esc).join(", "))).join("")).join("");
+  const via = u.via.map(({ visual, through }) => {
+    const v = NODES.get(visual), t = NODES.get(through);
+    return visualRow(v, `${esc(v.page)}, via ${esc(t.name)}`);
+  }).join("");
+  return `<h3>Where used</h3>
+    <div class="chips">${usageChip(n)}</div>
+    <p style="margin-top:8px">${usageSentence(n)}</p>
+    ${u.visuals.length ? `<h3>In visuals (${u.visuals.length})</h3>${direct}` : ""}
+    ${u.via.length ? `<h3>Through other measures (${u.via.length})</h3>${via}` : ""}`;
+}
+
+function visualDetailHtml(n) {
+  const fields = (OUT.get(n.id) || []).map(id => {
+    const f = NODES.get(id);
+    return `<button class="link" data-id="${esc(id)}">
+      <span class="dot" style="width:8px;height:8px;border-radius:2px;background:${KIND_COLOR[f.kind]}${f.exists ? "" : ";opacity:.4"}"></span>
+      <span class="nm">${esc(f.label)}<small> ${edgeRoles(n.id, id).map(esc).join(", ")}${f.exists ? "" : " \u00B7 not in the model"}</small></span></button>`;
+  }).join("");
+  const reach = upstreamOf(n.id).filter(id => NODES.get(id).kind === "measure").length;
+  return `<dl class="kv">
+      <dt>Page</dt><dd>${esc(n.page)}</dd>
+      <dt>Visual type</dt><dd>${esc(n.visualType)}</dd>
+      <dt>Report</dt><dd>${esc(n.report)}</dd>
+      <dt>Measures behind it</dt><dd>${reach}</dd>
+    </dl>
+    <h3>Fields (${(OUT.get(n.id) || []).length})</h3>${fields}`;
+}
+
+/* ---------- CSV ---------- */
+
+function csvCell(value) {
+  const s = String(value == null ? "" : value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCsv(name, header, rows) {
+  const text = "\uFEFF" + [header, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function whereUsedRows(onlyUnused) {
+  return DATA.nodes.filter(n => (n.kind === "measure" || n.kind === "column") && n.usage && n.exists)
+    .filter(n => !onlyUnused || isUnused(n))
+    .sort((a, b) => a.kind.localeCompare(b.kind) || (a.table || "").localeCompare(b.table || "") || a.name.localeCompare(b.name))
+    .map(n => {
+      const u = n.usage;
+      const visuals = u.visuals.map(id => {
+        const v = NODES.get(id);
+        return `${v.page} > ${v.title || v.visualType} [${edgeRoles(id, n.id).join("/")}]`;
+      });
+      const via = u.via.map(({ visual, through }) => `${NODES.get(visual).label.replace("\u203A", ">")} via ${NODES.get(through).name}`);
+      const readBy = (IN.get(n.id) || []).filter(id => NODES.get(id).kind !== "visual").map(id => NODES.get(id).label);
+      return [n.kind, n.table, n.name, USAGE[u.status].label, n.displayFolder, n.isHidden ? "yes" : "",
+        u.visuals.length, visuals.join("; "), u.via.length, via.join("; "), readBy.join("; "),
+        u.structural.join("; "), n.expression];
+    });
+}
+
+const CSV_HEADER = ["Kind", "Table", "Name", "Usage", "Display folder", "Hidden", "Visuals (direct)",
+  "Used in", "Visuals (through measures)", "Reached through", "Read by", "Model structure", "Expression"];
+
+function exportUnused() {
+  downloadCsv("unused-measures-and-columns.csv", CSV_HEADER, whereUsedRows(true));
+}
+function exportWhereUsed() {
+  downloadCsv("where-used.csv", CSV_HEADER, whereUsedRows(false));
+}
+
 /* ---------- detail panel ---------- */
 
 function nodeLink(id) {
@@ -477,10 +679,11 @@ function renderDetail() {
   const n = NODES.get(state.selected);
   const reads = (OUT.get(n.id) || []);
   const readBy = (IN.get(n.id) || []);
+  const readByFields = readBy.filter(id => NODES.get(id).kind !== "visual");
   const up = upstreamOf(n.id), down = downstreamOf(n.id);
 
   const badges = [];
-  if (!n.exists) badges.push(`<span class="badge crit">not in export</span>`);
+  if (!n.exists) badges.push(`<span class="badge crit">${(IN.get(n.id) || []).some(id => NODES.get(id).kind === "visual") ? "not in the model" : "not in export"}</span>`);
   if (n.isHidden) badges.push(`<span class="badge">hidden</span>`);
   if (n.isCalculated) badges.push(`<span class="badge">calculated column</span>`);
   if (n.state && n.state !== "Ready") badges.push(`<span class="badge warn">${esc(n.state)}</span>`);
@@ -490,14 +693,16 @@ function renderDetail() {
   if (n.unresolved.length) badges.push(`<span class="badge warn">${n.unresolved.length} unresolved ref</span>`);
 
   panel.innerHTML = `<div class="pad">
-    <h2>${esc(n.name)}</h2>
-    <div class="sub">${esc(n.kind)}${n.table ? " on " + esc(n.table) : ""}${
+    <h2>${esc(n.kind === "visual" ? (n.title || n.name) : n.name)}</h2>
+    <div class="sub">${n.kind === "visual" ? `visual on page ${esc(n.page)}` : esc(n.kind) + (n.table ? " on " + esc(n.table) : "")}${
       n.displayFolder ? " &middot; " + esc(n.displayFolder) : ""}</div>
     ${badges.length ? `<div class="chips">${badges.join("")}</div>` : ""}
     ${n.description ? `<h3>Description</h3><p>${esc(n.description)}</p>` : ""}
     ${n.errorMessage ? `<h3>Error</h3><p style="color:var(--critical)">${esc(n.errorMessage)}</p>` : ""}
 
-    <h3>Lineage</h3>
+    ${n.kind === "visual" ? visualDetailHtml(n) : whereUsedHtml(n)}
+
+    ${n.kind === "visual" ? "" : `<h3>Lineage</h3>
     <dl class="kv">
       <dt>Chain depth</dt><dd>${n.depth}</dd>
       <dt>Reads directly</dt><dd>${reads.length}</dd>
@@ -506,12 +711,12 @@ function renderDetail() {
       <dt>Read by in total</dt><dd>${down.length}</dd>
       ${n.formatString ? `<dt>Format</dt><dd>${esc(n.formatString)}</dd>` : ""}
       ${n.dataType ? `<dt>Data type</dt><dd>${esc(n.dataType)}</dd>` : ""}
-    </dl>
+    </dl>`}
 
     ${n.expression ? `<h3>DAX</h3><pre class="dax">${highlightDax(n.expression)}</pre>` : ""}
 
-    ${reads.length ? `<h3>Reads (${reads.length})</h3>${reads.map(nodeLink).join("")}` : ""}
-    ${readBy.length ? `<h3>Read by (${readBy.length})</h3>${readBy.map(nodeLink).join("")}` : ""}
+    ${reads.length && n.kind !== "visual" ? `<h3>Reads (${reads.length})</h3>${reads.map(nodeLink).join("")}` : ""}
+    ${readByFields.length ? `<h3>Read by measures and columns (${readByFields.length})</h3>${readByFields.map(nodeLink).join("")}` : ""}
     ${n.functions.length ? `<h3>Functions</h3><div class="chips">${
       n.functions.map(f => `<span class="badge">${esc(f)}</span>`).join("")}</div>` : ""}
     ${n.variables.length ? `<h3>Variables</h3><div class="chips">${
@@ -630,7 +835,7 @@ $("search").addEventListener("input", event => {
 });
 $("tableFilter").addEventListener("change", event => { state.table = event.target.value; render(); });
 $("sort").addEventListener("change", event => { state.sort = event.target.value; renderList(); });
-for (const key of ["showColumns", "showTables", "showHidden", "showUnreferenced", "focusOnly"]) {
+for (const key of ["showColumns", "showTables", "showHidden", "showUnreferenced", "showVisuals", "unusedOnly", "focusOnly"]) {
   $(key).addEventListener("change", event => { state[key] = event.target.checked; render(); });
 }
 
@@ -699,6 +904,13 @@ function mount(data, meta) {
   });
   $("search").value = "";
   $("focusOnly").checked = false;
+  state.showVisuals = true; state.unusedOnly = false;
+  $("showVisuals").checked = true; $("unusedOnly").checked = false;
+  $("reportToggles").hidden = !hasReport();
+  const usageOption = $("sort").querySelector('option[value="usage"]');
+  usageOption.disabled = !hasReport();
+  usageOption.textContent = hasReport() ? "Group by usage (unused first)" : "Group by usage (needs the report)";
+  if (!hasReport() && state.sort === "usage") { state.sort = "model"; $("sort").value = "model"; }
   $("tableFilter").innerHTML = `<option value="">All tables</option>` +
     DATA.tables.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   renderHeader();

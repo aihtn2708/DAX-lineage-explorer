@@ -1,7 +1,9 @@
 # DAX lineage explorer
 
 See what every DAX measure in a Power BI, Fabric or Analysis Services model reads,
-and what reads it — from the output of one query, [`INFO.MEASURES()`](https://learn.microsoft.com/en-us/dax/info-measures-function-dax).
+what reads it, **which report visuals use it, and which measures nothing uses at all** — from the
+output of one query, [`INFO.MEASURES()`](https://learn.microsoft.com/en-us/dax/info-measures-function-dax),
+and the report file.
 
 **Live demo: https://aihtn2708.github.io/DAX-lineage-explorer/** ·
 [open it with the sample model loaded](https://aihtn2708.github.io/DAX-lineage-explorer/#sample) ·
@@ -21,6 +23,57 @@ Two ways to use it, same rules and same results:
 pip install -e .
 daxlin build model.xlsx -o lineage.html     # the same workbook the page reads
 daxlin check model.xlsx                      # exits 1 on cycles, dangling refs, Error states
+daxlin unused -s model.xlsx --report Sales.pbix   # exits 1 if any measure is unused
+```
+
+## Where used, and unused measures
+
+`INFO.MEASURES()` describes the model; which visuals use a measure lives in the report.
+Give the tool both and every measure and column gets a status:
+
+| Status | Meaning |
+|---|---|
+| **In visuals** | a visual, slicer, filter or conditional format uses it directly |
+| **Through other measures** | no visual uses it, but a measure that a visual uses depends on it, so removing it breaks that visual |
+| **Model structure** | a column nothing reads, but it is a relationship key or another column's sort-by column |
+| **Read only by unused** | only measures that are themselves unused read it: the whole chain can go |
+| **Unused** | nothing in the model or the report reads it |
+
+Clicking a measure lists the visuals that use it, page by page, with the role it plays in each
+(axis, values, legend, tooltip, filter, conditional formatting), and the visuals that reach it
+through other measures, naming the measure in between. Visuals appear in the graph as the last
+layer, so a column can be traced all the way to the cards and charts it ends up in.
+**Group by usage** puts the unused ones first; **Unused only** shows just them and what they read;
+both lists export to CSV.
+
+Report formats it reads:
+
+| File | What it holds |
+|---|---|
+| `.pbix` | the report. Its model is in a binary format, so drop it **with** the INFO export. Only the report part of the file is read, in slices, however large the model |
+| `.pbit` (File → Export → Power BI template) | the report **and** the model as JSON: works on its own, no queries needed |
+| PBIP folder (or its zip) | `*.Report/definition/…/visual.json` (PBIR) or `*.Report/report.json`, plus `*.SemanticModel/model.bim` if the model is saved as TMSL |
+| report layout `.json` | the `Report/Layout` part on its own |
+
+A visual that uses a field the model no longer has is flagged too: that visual shows an error in
+Power BI.
+
+*Unused* means unused in the reports you load. Other reports on the same semantic model, Excel
+pivot tables, paginated reports, row-level security rules and calculation groups are not seen, so
+load every report that uses the model, and check before deleting.
+
+```
+daxlin unused     -s model.xlsx --report "Sales.pbix" --report "Finance.pbix"
+daxlin unused     -s "Sales.pbit" --columns-too
+daxlin where-used "Total Cost" -s "Sales.pbit"
+
+Total Cost  (measure on Measures)
+status: not in a visual, used through other measures
+
+through other measures (3):
+  Products > Margin by category  [pivotTable]  via Gross Margin
+  Overview > Gross margin %  [card]  via Gross Margin %
+  Customers > Share by segment  [clusteredBarChart]  via Gross Margin %
 ```
 
 ## 1. Get the data out of the model
@@ -86,7 +139,7 @@ Either way the page needs no server and no network. It has:
 ## 3. Ask it things from the terminal
 
 ```bash
-daxlin check   -s exports/        # cycles, dangling references, error states
+daxlin check   -s exports/        # cycles, dangling references, error states, broken visual fields
 daxlin deps    "Sales YoY %" -s exports/
 daxlin used-by "Total Sales"  -s exports/
 daxlin list    -s exports/        # every measure by chain depth
@@ -166,20 +219,24 @@ not what the engine does with it.
 | Path | What it is |
 |---|---|
 | `dax_lineage/` | the Python package behind `daxlin` |
-| `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner and graph, ported), `js/xlsx.js` (a dependency-free .xlsx reader), `js/viewer.js` |
-| `docs/samples/` | the downloadable sample workbooks, built by `scripts/make_samples.py` |
+| `dax_lineage/pbi_report.py` | reads Power BI reports: .pbix, .pbit, PBIP (PBIR and legacy), model.bim |
+| `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js` and `js/xlsx.js` (dependency-free readers), `js/viewer.js` |
+| `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
 | `examples/` | the same samples as CSV, the shape the CLI tests read |
 
-The browser port and the Python must agree: `tests/js/parity.test.js` runs both on the sample models and
-compares every node, edge and statistic.
+The browser port and the Python must agree: `tests/js/parity.test.js` runs both on the sample models, with
+and without a report, and compares every node, edge, usage status, where-used entry and statistic.
+`scripts/make_report_samples.py` writes one sample report as legacy layout, `.pbix`, `.pbit` and PBIR,
+and the tests check that all four give the same answer.
 
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 50 Python tests
-npm install && npm test                     # JS parity with Python + the .xlsx reader
+python3 -m pytest tests -q                  # 62 Python tests
+npm install && npm test                     # JS parity with Python, the .xlsx and report readers
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/
+python3 scripts/make_report_samples.py      # rebuild docs/samples/sample_report*.json
 npm run serve                               # the site at http://localhost:8000
 ```
 

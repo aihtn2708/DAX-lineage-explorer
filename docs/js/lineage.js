@@ -170,13 +170,16 @@
             id: int(row, "ID"), tableId: int(row, "TableID"), name: n,
             tableName: text(row, "Table", "TableName"), expression: text(row, "Expression"),
             dataType: text(row, "DataType", "ExplicitDataType", "InferredDataType"),
-            isHidden: bool(row, "IsHidden"), displayFolder: text(row, "DisplayFolder")
+            isHidden: bool(row, "IsHidden"), displayFolder: text(row, "DisplayFolder"),
+            sortByColumnId: int(row, "SortByColumnID"), sortByColumn: text(row, "SortByColumn")
           });
         } else if (kind === "relationships") {
           cat.relationships.push({
             fromTableId: int(row, "FromTableID"), fromColumnId: int(row, "FromColumnID"),
             toTableId: int(row, "ToTableID"), toColumnId: int(row, "ToColumnID"),
-            isActive: bool(row, "IsActive")
+            isActive: bool(row, "IsActive"),
+            fromTable: text(row, "FromTable"), fromColumn: text(row, "FromColumn"),
+            toTable: text(row, "ToTable"), toColumn: text(row, "ToColumn")
           });
         }
       }
@@ -198,8 +201,14 @@
     const colById = new Map(cat.columns.filter(c => c.id != null).map(c => [c.id, c]));
     for (const r of cat.relationships) {
       const fc = colById.get(r.fromColumnId), tc = colById.get(r.toColumnId);
-      r.fromTable = (fc && (fc.tableName || byId.get(fc.tableId))) || byId.get(r.fromTableId) || "";
-      r.toTable = (tc && (tc.tableName || byId.get(tc.tableId))) || byId.get(r.toTableId) || "";
+      r.fromTable = r.fromTable || (fc && (fc.tableName || byId.get(fc.tableId))) || byId.get(r.fromTableId) || "";
+      r.toTable = r.toTable || (tc && (tc.tableName || byId.get(tc.tableId))) || byId.get(r.toTableId) || "";
+      r.fromColumn = r.fromColumn || (fc ? fc.name : "");
+      r.toColumn = r.toColumn || (tc ? tc.name : "");
+    }
+    for (const c of cat.columns) {
+      const target = c.sortByColumnId != null ? colById.get(c.sortByColumnId) : null;
+      if (target) c.sortByColumn = target.name;
     }
     return cat;
   }
@@ -384,9 +393,9 @@
       }
       return id;
     };
-    const ensureMeasure = name => {
+    const ensureMeasure = (name, table) => {
       const id = measureId(name);
-      if (!nodes.has(id)) nodes.set(id, blankNode(id, "measure", name, { exists: false }));
+      if (!nodes.has(id)) nodes.set(id, blankNode(id, "measure", name, { exists: false, table: table || "" }));
       return id;
     };
     const ensureColumn = (table, name) => {
@@ -431,6 +440,26 @@
       for (const r of cat.relationships) if (r.fromTable && r.toTable) addEdge(ensureTable(r.fromTable), ensureTable(r.toTable), "relationship");
     }
 
+    // report visuals: one node per visual (or filter pane), reading its fields
+    const usages = (options && options.usages) || [];
+    const edgeRoles = new Map();
+    for (const u of usages) {
+      const vid = visualId(u.report, u.visualId);
+      if (!nodes.has(vid)) {
+        const title = u.title || prettyType(u.visualType);
+        nodes.set(vid, blankNode(vid, "visual", title, {
+          table: u.page, label: `${u.page} \u203A ${title}`, report: u.report, page: u.page,
+          pageOrder: u.pageOrder, visualType: u.visualType, title: u.title || ""
+        }));
+      }
+      const target = u.kind === "measure" ? ensureMeasure(u.name, u.table) : ensureColumn(u.table, u.name);
+      addEdge(vid, target, "used_in_visual");
+      const key = `${vid}|${target}`;
+      if (!edgeRoles.has(key)) edgeRoles.set(key, []);
+      if (!edgeRoles.get(key).includes(u.role)) edgeRoles.get(key).push(u.role);
+    }
+    for (const e of edges) if (e.kind === "used_in_visual") e.roles = edgeRoles.get(`${e.source}|${e.target}`) || [];
+
     // depth = longest dependency chain; cycles are recorded and cut
     const out = new Map([...nodes.keys()].map(id => [id, []]));
     for (const e of edges) out.get(e.source).push(e.target);
@@ -450,8 +479,88 @@
       return best;
     };
     for (const id of nodes.keys()) nodes.get(id).depth = walk(id, []);
+    // visuals sit in one final layer, to the right of the deepest measure
+    const deepestField = Math.max(0, ...[...nodes.values()].filter(n => n.kind !== "visual").map(n => n.depth));
+    for (const n of nodes.values()) if (n.kind === "visual") n.depth = deepestField + 1;
 
-    return finish(nodes, edges, cycles);
+    const graph = finish(nodes, edges, cycles);
+    if (usages.length) attachUsage(graph, cat);
+    return graph;
+  }
+
+  const visualId = (report, id) => `v:${norm(report)}|${norm(id)}`;
+  function prettyType(type) {
+    const t = String(type || "visual");
+    if (t === "page filters" || t === "report filters") return t.charAt(0).toUpperCase() + t.slice(1);
+    return t.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
+  }
+
+  /* ---------------- where used ---------------- */
+
+  // status of every measure and column against the loaded report(s):
+  //   visual      read by a visual or filter directly
+  //   indirect    no visual reads it, but a measure that reaches a visual does
+  //   structural  a column nothing reads, but a relationship key or sort-by target
+  //   deadChain   read only by measures that are themselves unused
+  //   unused      nothing reads it
+  function attachUsage(graph, cat) {
+    const byId = new Map(graph.nodes.map(n => [n.id, n]));
+    const readers = new Map(graph.nodes.map(n => [n.id, []]));
+    for (const e of graph.edges) if (readers.has(e.target)) readers.get(e.target).push(e.source);
+    const isVisual = id => byId.get(id) && byId.get(id).kind === "visual";
+
+    const structural = new Map();
+    const mark = (table, column, why) => {
+      const id = columnId(table, column);
+      if (byId.has(id)) (structural.get(id) || structural.set(id, []).get(id)).push(why);
+    };
+    for (const r of cat.relationships) {
+      if (r.fromTable && r.fromColumn) mark(r.fromTable, r.fromColumn, `relationship key to ${r.toTable}`);
+      if (r.toTable && r.toColumn) mark(r.toTable, r.toColumn, `relationship key from ${r.fromTable}`);
+    }
+    for (const c of cat.columns) if (c.sortByColumn) mark(c.tableName, c.sortByColumn, `sort-by column of ${c.tableName}[${c.name}]`);
+
+    const counts = { visual: 0, indirect: 0, structural: 0, deadChain: 0, unused: 0 };
+    const columnCounts = { visual: 0, indirect: 0, structural: 0, deadChain: 0, unused: 0 };
+    for (const n of graph.nodes) {
+      if (n.kind !== "measure" && n.kind !== "column") continue;
+      const direct = readers.get(n.id).filter(isVisual);
+      // walk up through measures and calculated columns, remembering which
+      // field each visual actually reads
+      const via = [], seen = new Set([n.id]), queue = readers.get(n.id).filter(id => !isVisual(id));
+      for (const id of queue) seen.add(id);
+      while (queue.length) {
+        const current = queue.shift();
+        for (const reader of readers.get(current) || []) {
+          if (isVisual(reader)) {
+            if (!direct.includes(reader) && !via.some(v => v.visual === reader)) via.push({ visual: reader, through: current });
+          } else if (!seen.has(reader)) { seen.add(reader); queue.push(reader); }
+        }
+      }
+      const fieldReaders = readers.get(n.id).filter(id => !isVisual(id));
+      const why = structural.get(n.id) || [];
+      const status = direct.length ? "visual"
+        : via.length ? "indirect"
+        : why.length ? "structural"
+        : fieldReaders.length ? "deadChain"
+        : "unused";
+      n.usage = { status, visuals: direct, via, structural: why };
+      if (n.exists) (n.kind === "measure" ? counts : columnCounts)[status]++;
+    }
+    const visuals = graph.nodes.filter(n => n.kind === "visual");
+    graph.stats.report = {
+      visuals: visuals.filter(v => !/filters$/.test(v.visualType)).length,
+      pages: [...new Set(visuals.filter(v => v.pageOrder >= 0).map(v => v.page))].length,
+      reports: [...new Set(visuals.map(v => v.report))],
+      measures: counts,
+      columns: columnCounts,
+      unusedMeasures: graph.nodes.filter(n => n.kind === "measure" && n.exists && n.usage &&
+        (n.usage.status === "unused" || n.usage.status === "deadChain")).map(n => n.name),
+      brokenVisualRefs: graph.edges.filter(e => e.kind === "used_in_visual" && byId.get(e.target) && !byId.get(e.target).exists)
+        .map(e => ({ visual: byId.get(e.source).label, field: byId.get(e.target).label }))
+    };
+    graph.pages = [...new Set(visuals.map(v => v.page))];
+    return graph;
   }
 
   function finish(nodes, edges, cycles) {
@@ -460,7 +569,7 @@
     const depsMap = new Map(list.map(n => [n.id, []])), usersMap = new Map(list.map(n => [n.id, []]));
     for (const e of edges) { depsMap.get(e.source).push(e.target); usersMap.get(e.target).push(e.source); }
     const deps = id => depsMap.get(id) || [];
-    const users = id => usersMap.get(id) || [];
+    const users = id => (usersMap.get(id) || []).filter(u => nodes.get(u).kind !== "visual");
     const measures = list.filter(n => n.kind === "measure");
     const isMeasure = id => nodes.has(id) && nodes.get(id).kind === "measure";
     const base = measures.filter(m => !deps(m.id).some(isMeasure));
@@ -471,7 +580,7 @@
       measures: measures.length,
       columns: list.filter(n => n.kind === "column").length,
       tables: list.filter(n => n.kind === "table").length,
-      edges: edges.length,
+      edges: edges.filter(e => e.kind !== "used_in_visual").length,
       missingObjects: list.filter(n => !n.exists).length,
       unresolvedReferences: [...new Set(list.flatMap(n => n.unresolved))].sort(),
       cycles,
@@ -482,8 +591,9 @@
       mostReferenced: stableSort(measures, m => -users(m.id).length).slice(0, 10)
         .filter(m => users(m.id).length).map(m => ({ name: m.name, count: users(m.id).length }))
     };
-    const tables = [...new Set([...list.filter(n => n.table).map(n => n.table), ...list.filter(n => n.kind === "table").map(n => n.name)])].sort();
-    const folders = [...new Set(list.filter(n => n.displayFolder).map(n => n.displayFolder))].sort();
+    const fields = list.filter(n => n.kind !== "visual");
+    const tables = [...new Set([...fields.filter(n => n.table).map(n => n.table), ...fields.filter(n => n.kind === "table").map(n => n.name)])].sort();
+    const folders = [...new Set(fields.filter(n => n.displayFolder).map(n => n.displayFolder))].sort();
     return { nodes: list, edges, stats, tables, folders };
   }
 
@@ -503,7 +613,8 @@
 
   const api = {
     headerKey, normaliseRows, parseDelimited, rowsFromMatrix, rowsFromJson, detectKind,
-    buildCatalogue, tokenize, scan, buildGraph, lineageFromSources, measureId, columnId, tableId
+    buildCatalogue, tokenize, scan, buildGraph, lineageFromSources, measureId, columnId, tableId,
+    visualId, attachUsage
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.DaxLineage = api;

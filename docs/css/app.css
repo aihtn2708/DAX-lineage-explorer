@@ -10,6 +10,7 @@
     --measure: #2a78d6;
     --column: #eb6834;
     --table: #1baf7a;
+    --visual: #6f6e69;
     --good: #0ca30c;
     --warning: #fab219;
     --critical: #d03b3b;
@@ -32,6 +33,7 @@
       --measure: #3987e5;
       --column: #d95926;
       --table: #199e70;
+      --visual: #a8a79f;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
     }
   }
@@ -47,6 +49,7 @@
     --measure: #3987e5;
     --column: #d95926;
     --table: #199e70;
+    --visual: #a8a79f;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
@@ -253,3 +256,23 @@
   }
   .legend .depth { margin-right: 4px; cursor: default; }
   .tag { font-size: 10px; color: var(--muted); border: 1px dashed var(--axis); border-radius: 4px; padding: 0 4px; }
+
+  /* ---------- where used ---------- */
+  .badge.usage.good { border-color: var(--good); }
+  .badge.usage.warn { border-color: var(--warning); color: var(--text-primary); }
+  .tag.warn { border: 1px solid var(--warning); color: var(--text-primary); }
+  .page-name { font-size: 11.5px; color: var(--muted); margin: 8px 0 2px 6px; }
+  .link small { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
+  .usage-summary { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .usage-summary b.plain { color: var(--text-primary); }
+  .usage-summary .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .usage-summary button { font-size: 12px; padding: 4px 8px; }
+  .usage-summary a { color: var(--measure); }
+  .group .count { float: right; text-transform: none; letter-spacing: 0; }
+  .page-icon { flex: none; display: inline-block; width: 10px; height: 12px; border-radius: 2px; border: 1.5px solid var(--visual); }
+
+  .usage-group { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .usage-group .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .usage-group .count { float: none; flex: none; }
+  .badge.usage { white-space: nowrap; flex: none; }
+  .link .dot { flex: none; align-self: flex-start; margin-top: 6px; }

@@ -7,6 +7,12 @@
     daxlin check
     daxlin json   -o lineage.json
     daxlin dot    -o lineage.dot
+
+With the report, for where-used and unused measures:
+    daxlin unused     -s model.xlsx --report "Sales.pbix"   # exits 1 if any are unused
+    daxlin where-used "Total Sales" -s model.xlsx --report "Sales.pbix"
+    daxlin unused     -s "Sales.pbit"                        # a .pbit carries both
+    daxlin unused     -s "C:/projects/Sales"                 # a PBIP folder with model.bim
 """
 
 from __future__ import annotations
@@ -16,7 +22,8 @@ import sys
 from pathlib import Path
 
 from .graph import build_graph, measure_id
-from .load import autodiscover, load_catalogue, load_workbook
+from .load import autodiscover, catalogue_from_rows, load_catalogue, load_workbook
+from .pbi_report import is_report_path, read_report
 from .report import render_dot, render_html, render_json, render_mermaid, render_tree
 
 
@@ -37,32 +44,64 @@ def _inputs(args) -> dict:
         ):
             if flag:
                 found[key] = Path(flag)
-        if not args.with_relationships:
-            found.pop("relationships_path", None)
         return found
     return {
         "measures_path": source,
         "tables_path": Path(args.tables) if args.tables else None,
         "columns_path": Path(args.columns) if args.columns else None,
-        "relationships_path": (
-            Path(args.relationships)
-            if args.relationships and args.with_relationships
-            else None
-        ),
+        "relationships_path": Path(args.relationships) if args.relationships else None,
     }
 
 
+def _read_reports(paths) -> tuple:
+    usages, model, notes = [], None, []
+    for path in paths:
+        result = read_report(path)
+        if result is None or (not result.usages and not result.model):
+            raise SystemExit(f"{path}: no Power BI report or model found in it")
+        usages.extend(result.usages)
+        model = model or result.model
+        if result.note:
+            notes.append(result.note)
+    return usages, model, notes
+
+
 def _load(args):
+    """Model from INFO.* exports, a .pbit, model.bim or PBIP folder; usage from any reports."""
     source = Path(args.source)
-    if source.suffix.lower() in {".xlsx", ".xlsm"}:
+    reports = list(args.report or [])
+    is_info_folder = source.is_dir() and "measures_path" in autodiscover(source)
+    source_is_report = (source.is_dir() and not is_info_folder) or (not source.is_dir() and is_report_path(source))
+    if source_is_report:
+        if source.is_dir():
+            probe = read_report(source)
+            if probe is None or (not probe.usages and not probe.model):
+                raise SystemExit(
+                    f"{source}: no file whose name contains 'measure' (the INFO.MEASURES export), "
+                    "and no Power BI project in it (a .Report folder or model.bim)."
+                )
+        reports.insert(0, source)
+    usages, json_model, notes = _read_reports(reports)
+
+    if source_is_report:
+        if not json_model:
+            raise SystemExit(
+                (notes[0] if notes else f"{source}: no model in it.")
+                + " Pass the INFO.MEASURES export with -s and this file with --report."
+            )
+        catalogue = catalogue_from_rows(json_model)
+        names = source.name
+    elif source.suffix.lower() in {".xlsx", ".xlsm"}:
         catalogue = load_workbook(source)
-        if not args.with_relationships:
-            catalogue.relationships = []
-        return build_graph(catalogue, include_relationships=args.with_relationships), source.name
-    paths = _inputs(args)
-    catalogue = load_catalogue(**paths)
-    lineage = build_graph(catalogue, include_relationships=bool(paths.get("relationships_path")))
-    names = ", ".join(sorted({Path(p).name for p in paths.values() if p}))
+        names = source.name
+    else:
+        paths = _inputs(args)
+        catalogue = load_catalogue(**paths)
+        names = ", ".join(sorted({Path(p).name for p in paths.values() if p}))
+    if args.report:
+        names += " + " + ", ".join(Path(r).name for r in args.report)
+    # relationships always mark key columns as used; they are drawn only on request
+    lineage = build_graph(catalogue, include_relationships=args.with_relationships, usages=usages or None)
     return lineage, names
 
 
@@ -100,7 +139,8 @@ def main(argv=None) -> int:
         prog="daxlin",
         description="Read DAX lineage out of INFO.MEASURES() query output and draw it.",
     )
-    parser.add_argument("command", choices=["build", "json", "dot", "mermaid", "deps", "used-by", "check", "list"])
+    parser.add_argument("command", choices=["build", "json", "dot", "mermaid", "deps", "used-by", "check", "list",
+                                            "unused", "where-used"])
     parser.add_argument("target", nargs="?", help="measure or column name, for deps / used-by")
     parser.add_argument("-s", "--source", default="examples",
                         help="the INFO.MEASURES export, an .xlsx workbook with a sheet per INFO.* query, "
@@ -108,6 +148,9 @@ def main(argv=None) -> int:
     parser.add_argument("--tables", help="INFO.TABLES export")
     parser.add_argument("--columns", help="INFO.COLUMNS export")
     parser.add_argument("--relationships", help="INFO.RELATIONSHIPS export")
+    parser.add_argument("-r", "--report", action="append", metavar="PATH",
+                        help="a Power BI report (.pbix, .pbit, PBIP folder or its zip, report layout .json); repeatable")
+    parser.add_argument("--columns-too", action="store_true", help="unused: list unused columns as well")
     parser.add_argument("--with-relationships", action="store_true",
                         help="also draw table-to-table relationship edges")
     parser.add_argument("-o", "--out", help="output file; '-' for stdout")
@@ -150,6 +193,12 @@ def main(argv=None) -> int:
                 f"{len(lineage.dependencies(node.id)):>5}  {len(lineage.dependents(node.id)):>7}  {node.table}"
             )
         _write("\n".join(lines), args.out, "measures.txt")
+    elif args.command == "unused":
+        return _unused(lineage, args)
+    elif args.command == "where-used":
+        if not args.target:
+            raise SystemExit("where-used needs a measure or column name")
+        _write(_where_used(lineage, _find(lineage, args.target)), args.out, "where-used.txt")
     elif args.command == "check":
         stats = lineage.stats()
         problems = 0
@@ -173,6 +222,12 @@ def main(argv=None) -> int:
             for node in missing:
                 users = ", ".join(lineage.nodes[u].label for u in lineage.dependents(node.id)[:4])
                 print(f"  {node.label}  <- {users}")
+        report = stats.get("report")
+        if report and report["brokenVisualRefs"]:
+            problems += len(report["brokenVisualRefs"])
+            print(f"\nvisual fields missing from the model ({len(report['brokenVisualRefs'])}):")
+            for broken in report["brokenVisualRefs"]:
+                print(f"  {broken['visual']}: {broken['field']}")
         errors = [n for n in lineage.nodes.values() if n.state and n.state not in ("Ready", "")]
         if errors:
             problems += len(errors)
@@ -183,9 +238,85 @@ def main(argv=None) -> int:
             print(f"\nleaf measures, not read by any other measure "
                   f"({len(stats['unusedByOtherMeasures'])}): "
                   + ", ".join(stats["unusedByOtherMeasures"][:12]))
+        if report:
+            m = report["measures"]
+            print(f"\nusage in {', '.join(report['reports'])}: {m['visual']} measures in visuals, "
+                  f"{m['indirect']} through other measures, {m['unused'] + m['deadChain']} unused "
+                  f"(run `daxlin unused` for the list)")
         print("\nno problems found" if not problems else f"\n{problems} thing(s) to look at")
         return 1 if problems else 0
     return 0
+
+
+STATUS_TEXT = {
+    "visual": "used in visuals",
+    "indirect": "not in a visual, used through other measures",
+    "structural": "nothing reads it, but the model needs it",
+    "deadChain": "unused: only unused measures read it",
+    "unused": "unused: nothing reads it",
+}
+
+
+def _need_report(lineage) -> None:
+    if not lineage.has_report:
+        raise SystemExit(
+            "this needs the report: add --report with a .pbix, .pbit or PBIP folder, "
+            "or pass a .pbit / PBIP folder with -s"
+        )
+
+
+def _unused(lineage, args) -> int:
+    _need_report(lineage)
+    stats = lineage.stats()["report"]
+    rows = [n for n in lineage.unused() if n.kind == "measure" or args.columns_too]
+    rows.sort(key=lambda n: (n.kind != "measure", n.usage["status"] != "unused", n.table, n.name))
+    lines = [f"Usage in {', '.join(stats['reports'])}: {stats['visuals']} visuals on {stats['pages']} pages"]
+    if not rows:
+        lines.append("\nevery measure is used" + (" and every column" if args.columns_too else ""))
+    else:
+        width = max(len(n.label) for n in rows)
+        lines.append("")
+        lines.append(f"{'name'.ljust(width)}  {'kind':7}  status")
+        for n in rows:
+            readers = [lineage.nodes[r].name for r in lineage.dependents(n.id) if lineage.nodes[r].kind != "visual"]
+            extra = f"  (read by {', '.join(readers)})" if readers else ""
+            lines.append(f"{n.label.ljust(width)}  {n.kind:7}  {STATUS_TEXT[n.usage['status']]}{extra}")
+        lines.append("\nUnused in the reports given. Other reports on the same semantic model, Excel and")
+        lines.append("paginated reports are not seen: check them before deleting.")
+    _write("\n".join(lines), args.out, "unused.txt")
+    return 1 if any(n.kind == "measure" for n in rows) else 0
+
+
+def _where_used(lineage, node_id: str) -> str:
+    _need_report(lineage)
+    node = lineage.nodes[node_id]
+    if node.usage is None:
+        raise SystemExit(f"{node.label} is a {node.kind}; where-used is for measures and columns")
+    u = node.usage
+    roles = {(e.source, e.target): e.roles for e in lineage.edges if e.kind == "used_in_visual"}
+    lines = [f"{node.label}  ({node.kind}{' on ' + node.table if node.table and node.kind == 'measure' else ''})",
+             f"status: {STATUS_TEXT[u['status']]}"]
+    if u["structural"]:
+        lines.append("model needs it: " + "; ".join(u["structural"]))
+    if u["visuals"]:
+        lines.append(f"\nin visuals ({len(u['visuals'])}):")
+        by_page: dict = {}
+        for vid in u["visuals"]:
+            by_page.setdefault(lineage.nodes[vid].page, []).append(vid)
+        for page, vids in sorted(by_page.items(), key=lambda kv: lineage.nodes[kv[1][0]].page_order):
+            lines.append(f"  {page}")
+            for vid in vids:
+                v = lineage.nodes[vid]
+                lines.append(f"    {v.title or v.name}  [{v.visual_type}]  {', '.join(roles.get((vid, node_id), []))}")
+    if u["via"]:
+        lines.append(f"\nthrough other measures ({len(u['via'])}):")
+        for item in u["via"]:
+            v, through = lineage.nodes[item["visual"]], lineage.nodes[item["through"]]
+            lines.append(f"  {v.page} > {v.title or v.name}  [{v.visual_type}]  via {through.name}")
+    readers = [lineage.nodes[r].label for r in lineage.dependents(node_id) if lineage.nodes[r].kind != "visual"]
+    if readers:
+        lines.append(f"\nread by measures and columns ({len(readers)}): " + ", ".join(readers))
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

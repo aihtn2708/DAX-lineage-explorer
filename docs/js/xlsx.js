@@ -4,58 +4,12 @@
  * inflates entries with the browser's DecompressionStream, and walks the
  * workbook, shared strings and sheet XML with DOMParser.
  * It reads values only (no styles, formulas are read as their cached value).
- * Exposes window.XlsxReader.read(arrayBuffer) -> [{ name, matrix }]
+ * Exposes window.XlsxReader.read(blobOrBytes) -> [{ name, matrix }]
  */
 (function (root) {
   "use strict";
 
-  const decoder = new TextDecoder("utf-8");
-
-  function readZipDirectory(bytes) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let eocd = -1;
-    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) {
-      if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-    }
-    if (eocd < 0) throw new Error("This is not a zip-based .xlsx file.");
-    const count = view.getUint16(eocd + 10, true);
-    let offset = view.getUint32(eocd + 16, true);
-    const entries = new Map();
-    for (let n = 0; n < count; n++) {
-      if (view.getUint32(offset, true) !== 0x02014b50) throw new Error("The .xlsx zip directory is damaged.");
-      const method = view.getUint16(offset + 10, true);
-      const compressedSize = view.getUint32(offset + 20, true);
-      const nameLength = view.getUint16(offset + 28, true);
-      const extraLength = view.getUint16(offset + 30, true);
-      const commentLength = view.getUint16(offset + 32, true);
-      const localOffset = view.getUint32(offset + 42, true);
-      const name = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLength));
-      entries.set(name, { method, compressedSize, localOffset });
-      offset += 46 + nameLength + extraLength + commentLength;
-    }
-    return { view, entries };
-  }
-
-  async function inflateRaw(data) {
-    if (typeof DecompressionStream === "undefined") {
-      throw new Error("This browser cannot unzip files (no DecompressionStream). Use a current Chrome, Edge, Firefox or Safari, or upload CSV.");
-    }
-    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-
-  async function entryText(bytes, dir, name) {
-    const entry = dir.entries.get(name) || dir.entries.get(name.replace(/^\//, ""));
-    if (!entry) return null;
-    const { view } = dir;
-    const at = entry.localOffset;
-    if (view.getUint32(at, true) !== 0x04034b50) throw new Error(`Damaged zip entry: ${name}`);
-    const start = at + 30 + view.getUint16(at + 26, true) + view.getUint16(at + 28, true);
-    const raw = bytes.subarray(start, start + entry.compressedSize);
-    if (entry.method === 0) return decoder.decode(raw);
-    if (entry.method === 8) return decoder.decode(await inflateRaw(raw));
-    throw new Error(`Unsupported zip compression (method ${entry.method}) in ${name}.`);
-  }
+  const Z = () => root.Zip || (typeof require === "function" ? require("./zip.js") : null);
 
   function parseXml(text) {
     const doc = new DOMParser().parseFromString(text, "application/xml");
@@ -81,20 +35,23 @@
     return out.join("/");
   }
 
-  async function read(buffer) {
-    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+  async function read(input) {
+    const blob = Z().asBlob(input);
+    const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    if (head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0) {
       throw new Error("This is an old .xls workbook. In Excel use File → Save As → Excel Workbook (.xlsx), or save each sheet as CSV.");
     }
-    const dir = readZipDirectory(bytes);
-    const workbookXml = await entryText(bytes, dir, "xl/workbook.xml");
+    let zip;
+    try { zip = await Z().open(blob); }
+    catch (err) { throw new Error("This is not a zip-based .xlsx file."); }
+    const workbookXml = await zip.text("xl/workbook.xml");
     if (!workbookXml) throw new Error("No workbook found inside the file. Is it an Excel .xlsx?");
-    const relsXml = await entryText(bytes, dir, "xl/_rels/workbook.xml.rels");
+    const relsXml = await zip.text("xl/_rels/workbook.xml.rels");
     const rels = new Map();
     if (relsXml) for (const r of all(parseXml(relsXml), "Relationship")) rels.set(r.getAttribute("Id"), r.getAttribute("Target"));
 
     const shared = [];
-    const sharedXml = await entryText(bytes, dir, "xl/sharedStrings.xml");
+    const sharedXml = await zip.text("xl/sharedStrings.xml");
     if (sharedXml) for (const si of all(parseXml(sharedXml), "si")) shared.push(textOf(si));
 
     const sheets = [];
@@ -105,7 +62,7 @@
         sheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
       const target = rels.get(rid) || `worksheets/sheet${fallback}.xml`;
       fallback++;
-      const xml = await entryText(bytes, dir, resolveTarget(target));
+      const xml = await zip.text(resolveTarget(target));
       if (!xml) continue;
       const doc = parseXml(xml);
       const matrix = [];

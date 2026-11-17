@@ -29,6 +29,46 @@ for (const folder of ["examples", "examples/troubled"]) {
   });
 }
 
+// with a report: every status, every where-used entry, every stat
+{
+  const os = require("os"), fs = require("fs");
+  globalThis.Zip = require("../../docs/js/zip.js");
+  const R = require("../../docs/js/report.js");
+  const fixtures = fs.mkdtempSync(path.join(os.tmpdir(), "dax-lineage-parity-"));
+  execFileSync("python3", [path.join(root, "scripts/make_report_samples.py"), "--fixtures", fixtures]);
+  const cases = [["examples", "sales.pbix"], ["examples", "sales_pbir.zip"], ["examples/troubled", "problems_layout.json"]];
+  (async () => {
+    for (const [folder, report] of cases) {
+      const file = path.join(fixtures, report);
+      const dump = JSON.parse(execFileSync("python3", [path.join(__dirname, "dump_python.py"), path.join(root, folder), file]));
+      const py = dump.python;
+      const read = await R.readFile(report, new Blob([fs.readFileSync(file)]));
+      const js = L.lineageFromSources(dump.sources, { usages: read.usages });
+      const usageOf = n => n.usage ? JSON.stringify([n.usage.status, [...n.usage.visuals].sort(),
+        n.usage.via.map(v => `${v.visual}<${v.through}`).sort(), n.usage.structural]) : "";
+      const pick = n => JSON.stringify([n.id, n.kind, n.depth, n.exists, n.label, n.page || "", usageOf(n)]);
+      const label = `${folder} + ${report}`;
+      const check = (what, fn) => {
+        try { fn(); console.log(`ok    ${label}: ${what}`); }
+        catch (e) { failures++; console.log(`FAIL  ${label}: ${what}\n      ${e.message.split("\n").slice(0, 8).join("\n      ")}`); }
+      };
+      check("same nodes and usage", () => assert.deepStrictEqual(js.nodes.map(pick).sort(), py.nodes.map(pick).sort()));
+      check("same edges and roles", () => assert.deepStrictEqual(
+        js.edges.map(e => `${e.source}>${e.target}:${e.kind}:${(e.roles || []).join("/")}`).sort(),
+        py.edges.map(e => `${e.source}>${e.target}:${e.kind}:${(e.roles || []).join("/")}`).sort()));
+      check("same stats, report stats included", () => assert.deepStrictEqual(js.stats, py.stats));
+      check("same tables, folders and pages", () => {
+        assert.deepStrictEqual(js.tables, py.tables);
+        assert.deepStrictEqual(js.folders, py.folders);
+        assert.deepStrictEqual(js.pages, py.pages);
+      });
+    }
+    fs.rmSync(fixtures, { recursive: true, force: true });
+    finishDetection();
+  })();
+}
+
+function finishDetection() {
 // header and sheet detection
 const kind = (headers, label) => L.detectKind([Object.fromEntries(headers.map(h => [h, ""]))], label);
 const cases = [
@@ -57,3 +97,4 @@ try {
 
 console.log(failures ? `\n${failures} failure(s)` : "\nall parity checks passed");
 process.exit(failures ? 1 : 0);
+}

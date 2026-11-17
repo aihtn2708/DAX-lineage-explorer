@@ -25,6 +25,19 @@ def table_id(name: str) -> str:
     return f"t:{_norm(name)}"
 
 
+def visual_id(report: str, visual: str) -> str:
+    return f"v:{_norm(report)}|{_norm(visual)}"
+
+
+def pretty_type(kind: str) -> str:
+    text = str(kind or "visual")
+    if text in ("page filters", "report filters"):
+        return text[0].upper() + text[1:]
+    import re
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    return spaced[0].upper() + spaced[1:]
+
+
 @dataclass
 class Node:
     id: str
@@ -49,9 +62,15 @@ class Node:
     unresolved: list = field(default_factory=list)
     depth: int = 0
     exists: bool = True
+    report: str = ""
+    page: str = ""
+    page_order: int = 0
+    visual_type: str = ""
+    title: str = ""
+    usage: Optional[dict] = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "id": self.id,
             "kind": self.kind,
             "name": self.name,
@@ -75,22 +94,32 @@ class Node:
             "depth": self.depth,
             "exists": self.exists,
         }
+        if self.kind == "visual":
+            out.update({"report": self.report, "page": self.page, "pageOrder": self.page_order,
+                        "visualType": self.visual_type, "title": self.title})
+        if self.usage is not None:
+            out["usage"] = self.usage
+        return out
 
 
 @dataclass
 class Edge:
     source: str  # the dependent
     target: str  # the dependency
-    kind: str    # uses_measure | uses_column | uses_table | relationship
+    kind: str    # uses_measure | uses_column | uses_table | relationship | used_in_visual
     via_variable: bool = False
+    roles: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "source": self.source,
             "target": self.target,
             "kind": self.kind,
             "viaVariable": self.via_variable,
         }
+        if self.kind == "used_in_visual":
+            out["roles"] = self.roles
+        return out
 
 
 @dataclass
@@ -99,6 +128,7 @@ class Lineage:
     edges: list = field(default_factory=list)
     catalogue: Optional[Catalogue] = None
     cycles: list = field(default_factory=list)
+    has_report: bool = False
 
     # -- traversal ----------------------------------------------------------
 
@@ -153,6 +183,9 @@ class Lineage:
         for node_id in self.nodes:
             self.nodes[node_id].depth = walk(node_id, [])
 
+    def _field_dependents(self, node_id: str) -> list:
+        return [d for d in self.dependents(node_id) if d in self.nodes and self.nodes[d].kind != "visual"]
+
     def stats(self) -> dict:
         measures = [n for n in self.nodes.values() if n.kind == "measure"]
         columns = [n for n in self.nodes.values() if n.kind == "column"]
@@ -178,13 +211,13 @@ class Lineage:
         deepest = sorted(measures, key=lambda n: -n.depth)[:10]
         most_used = sorted(
             measures,
-            key=lambda n: -len([d for d in self.dependents(n.id)]),
+            key=lambda n: -len(self._field_dependents(n.id)),
         )[:10]
-        return {
+        out = {
             "measures": len(measures),
             "columns": len(columns),
             "tables": len(tables),
-            "edges": len(self.edges),
+            "edges": len([e for e in self.edges if e.kind != "used_in_visual"]),
             "missingObjects": len([n for n in self.nodes.values() if not n.exists]),
             "unresolvedReferences": unresolved,
             "cycles": self.cycles,
@@ -193,28 +226,68 @@ class Lineage:
             "unusedByOtherMeasures": [m.name for m in unused],
             "deepest": [{"name": m.name, "depth": m.depth} for m in deepest if m.depth],
             "mostReferenced": [
-                {"name": m.name, "count": len(self.dependents(m.id))}
+                {"name": m.name, "count": len(self._field_dependents(m.id))}
                 for m in most_used
-                if self.dependents(m.id)
+                if self._field_dependents(m.id)
+            ],
+        }
+        if self.has_report:
+            out["report"] = self.report_stats()
+        return out
+
+    def report_stats(self) -> dict:
+        visuals = [n for n in self.nodes.values() if n.kind == "visual"]
+        blank = {"visual": 0, "indirect": 0, "structural": 0, "deadChain": 0, "unused": 0}
+        measures, columns = dict(blank), dict(blank)
+        for n in self.nodes.values():
+            if n.usage and n.exists:
+                (measures if n.kind == "measure" else columns)[n.usage["status"]] += 1
+        reports = []
+        for v in visuals:
+            if v.report not in reports:
+                reports.append(v.report)
+        return {
+            "visuals": len([v for v in visuals if not v.visual_type.endswith("filters")]),
+            "pages": len({v.page for v in visuals if v.page_order >= 0}),
+            "reports": reports,
+            "measures": measures,
+            "columns": columns,
+            "unusedMeasures": [n.name for n in self.nodes.values() if n.kind == "measure" and n.exists and n.usage
+                               and n.usage["status"] in ("unused", "deadChain")],
+            "brokenVisualRefs": [
+                {"visual": self.nodes[e.source].label, "field": self.nodes[e.target].label}
+                for e in self.edges
+                if e.kind == "used_in_visual" and e.target in self.nodes and not self.nodes[e.target].exists
             ],
         }
 
+    def unused(self) -> list:
+        return [n for n in self.nodes.values() if n.usage and n.exists and n.usage["status"] in ("unused", "deadChain")]
+
     def to_dict(self) -> dict:
-        return {
+        fields = [n for n in self.nodes.values() if n.kind != "visual"]
+        out = {
             "nodes": [n.to_dict() for n in self.nodes.values()],
             "edges": [e.to_dict() for e in self.edges],
             "stats": self.stats(),
             "tables": sorted(
-                {n.table for n in self.nodes.values() if n.table}
-                | {n.name for n in self.nodes.values() if n.kind == "table"}
+                {n.table for n in fields if n.table}
+                | {n.name for n in fields if n.kind == "table"}
             ),
             "folders": sorted(
-                {n.display_folder for n in self.nodes.values() if n.display_folder}
+                {n.display_folder for n in fields if n.display_folder}
             ),
         }
+        if self.has_report:
+            pages = []
+            for n in self.nodes.values():
+                if n.kind == "visual" and n.page not in pages:
+                    pages.append(n.page)
+            out["pages"] = pages
+        return out
 
 
-def build_graph(catalogue: Catalogue, include_relationships: bool = False) -> Lineage:
+def build_graph(catalogue: Catalogue, include_relationships: bool = False, usages=None) -> Lineage:
     """Scan every measure and calculated column and wire up the references."""
     lineage = Lineage(catalogue=catalogue)
     measure_names = catalogue.measure_names
@@ -269,11 +342,11 @@ def build_graph(catalogue: Catalogue, include_relationships: bool = False) -> Li
             )
         return node_id
 
-    def ensure_measure(name: str) -> str:
+    def ensure_measure(name: str, table: str = "") -> str:
         node_id = measure_id(name)
         if node_id not in lineage.nodes:
             lineage.nodes[node_id] = Node(
-                id=node_id, kind="measure", name=name, label=name, exists=False
+                id=node_id, kind="measure", name=name, label=name, table=table, exists=False
             )
         return node_id
 
@@ -306,6 +379,9 @@ def build_graph(catalogue: Catalogue, include_relationships: bool = False) -> Li
             return
         seen_edges.add(key)
         lineage.edges.append(Edge(source, target, kind, via_variable))
+        edge_index[(source, target, kind)] = lineage.edges[-1]
+
+    edge_index: dict = {}
 
     def wire(node: Node, expression: str) -> None:
         result = scan(expression, measure_names, column_names, table_names)
@@ -345,5 +421,83 @@ def build_graph(catalogue: Catalogue, include_relationships: bool = False) -> Li
             if rel.from_table and rel.to_table:
                 add_edge(ensure_table(rel.from_table), ensure_table(rel.to_table), "relationship")
 
+    # report visuals: one node per visual (or filter pane), reading its fields
+    for usage in usages or []:
+        vid = visual_id(usage["report"], usage["visualId"])
+        if vid not in lineage.nodes:
+            title = usage.get("title") or pretty_type(usage.get("visualType"))
+            lineage.nodes[vid] = Node(
+                id=vid, kind="visual", name=title, table=usage["page"], label=f"{usage['page']} \u203a {title}",
+                report=usage["report"], page=usage["page"], page_order=usage["pageOrder"],
+                visual_type=usage.get("visualType") or "", title=usage.get("title") or "",
+            )
+        target = (ensure_measure(usage["name"], usage.get("table", "")) if usage["kind"] == "measure"
+                  else ensure_column(usage.get("table", ""), usage["name"]))
+        add_edge(vid, target, "used_in_visual")
+        edge = edge_index.get((vid, target, "used_in_visual"))
+        if edge is not None and usage["role"] not in edge.roles:
+            edge.roles.append(usage["role"])
+
     lineage.compute_depth()
+    deepest_field = max([n.depth for n in lineage.nodes.values() if n.kind != "visual"], default=0)
+    for node in lineage.nodes.values():
+        if node.kind == "visual":
+            node.depth = deepest_field + 1
+    if usages:
+        lineage.has_report = True
+        attach_usage(lineage, catalogue)
     return lineage
+
+
+def attach_usage(lineage: Lineage, catalogue: Catalogue) -> None:
+    """Status of every measure and column against the loaded report(s).
+
+    visual      read by a visual or filter directly
+    indirect    no visual reads it, but a measure that reaches a visual does
+    structural  a column nothing reads, but a relationship key or sort-by target
+    deadChain   read only by measures that are themselves unused
+    unused      nothing reads it
+    """
+    readers = {node_id: [] for node_id in lineage.nodes}
+    for edge in lineage.edges:
+        if edge.target in readers:
+            readers[edge.target].append(edge.source)
+    is_visual = lambda i: i in lineage.nodes and lineage.nodes[i].kind == "visual"
+
+    structural: dict = {}
+
+    def mark(table, column, why):
+        node_id = column_id(table, column)
+        if node_id in lineage.nodes:
+            structural.setdefault(node_id, []).append(why)
+
+    for rel in catalogue.relationships:
+        if rel.from_table and rel.from_column:
+            mark(rel.from_table, rel.from_column, f"relationship key to {rel.to_table}")
+        if rel.to_table and rel.to_column:
+            mark(rel.to_table, rel.to_column, f"relationship key from {rel.from_table}")
+    for column in catalogue.columns:
+        if column.sort_by_column:
+            mark(column.table_name, column.sort_by_column, f"sort-by column of {column.table_name}[{column.name}]")
+
+    for node in lineage.nodes.values():
+        if node.kind not in ("measure", "column"):
+            continue
+        direct = [r for r in readers[node.id] if is_visual(r)]
+        via, seen = [], {node.id}
+        queue = [r for r in readers[node.id] if not is_visual(r)]
+        seen.update(queue)
+        while queue:
+            current = queue.pop(0)
+            for reader in readers.get(current, []):
+                if is_visual(reader):
+                    if reader not in direct and not any(v["visual"] == reader for v in via):
+                        via.append({"visual": reader, "through": current})
+                elif reader not in seen:
+                    seen.add(reader)
+                    queue.append(reader)
+        field_readers = [r for r in readers[node.id] if not is_visual(r)]
+        why = structural.get(node.id, [])
+        status = ("visual" if direct else "indirect" if via else "structural" if why
+                  else "deadChain" if field_readers else "unused")
+        node.usage = {"status": status, "visuals": direct, "via": via, "structural": why}
