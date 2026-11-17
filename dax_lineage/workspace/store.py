@@ -20,8 +20,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DECISIONS = ("", "keep", "remove")
+REVIEW_STATES = ("pending", "approved", "changes_requested")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -134,6 +135,22 @@ CREATE TABLE IF NOT EXISTS annotation (
     updated_by TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (model_id, object_key)
 );
+CREATE TABLE IF NOT EXISTS review (
+    version_id INTEGER PRIMARY KEY REFERENCES model_version(id),
+    status     TEXT NOT NULL DEFAULT 'pending',
+    reviewer   TEXT NOT NULL DEFAULT '',
+    decided_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS comment (
+    id         INTEGER PRIMARY KEY,
+    version_id INTEGER NOT NULL REFERENCES model_version(id),
+    object_key TEXT NOT NULL DEFAULT '',
+    kind       TEXT NOT NULL DEFAULT 'comment',
+    author     TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS comment_version_idx ON comment (version_id);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
@@ -146,6 +163,13 @@ CREATE TABLE IF NOT EXISTS scan_run (
     log          TEXT NOT NULL DEFAULT ''
 );
 """
+
+
+# a model's first version, and a version that could not be read, have nothing to review
+REVIEW_STATUS_SQL = ("CASE WHEN v.status = 'error' THEN 'unreadable' "
+                     "WHEN NOT EXISTS (SELECT 1 FROM model_version p WHERE p.model_id = v.model_id "
+                     "AND p.number < v.number AND p.status != 'error') THEN 'baseline' "
+                     "ELSE COALESCE(r.status, 'pending') END")
 
 
 def now() -> str:
@@ -175,6 +199,9 @@ class Store:
                 con.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
             elif int(found["value"]) > SCHEMA_VERSION:
                 raise RuntimeError(f"{self.path} was made by a newer daxlin (schema {found['value']}); update daxlin")
+            elif int(found["value"]) < SCHEMA_VERSION:
+                # every change so far only adds tables, which the script above has just created
+                con.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
 
     @contextmanager
     def connect(self):
@@ -320,6 +347,7 @@ class Store:
                 "SELECT COALESCE(SUM(CASE WHEN decision = 'keep' THEN 1 ELSE 0 END), 0) AS keep, "
                 "COALESCE(SUM(CASE WHEN decision = 'remove' THEN 1 ELSE 0 END), 0) AS remove FROM annotation"
             ).fetchone())
+        totals["pending_reviews"] = len(self.reviews("pending"))
         totals["folders"] = self.folders()
         totals["last_run"] = self.last_run()
         return totals
@@ -342,9 +370,10 @@ class Store:
         model = found[0]
         with self.connect() as con:
             model["history"] = _rows(con.execute(
-                "SELECT id, number, file_hash, file_size, file_modified_at, scanned_at, status, note, measures, "
-                "columns, visuals, unused_measures, broken_refs FROM model_version WHERE model_id = ? "
-                "ORDER BY number DESC", (model_id,)))
+                "SELECT v.id, v.number, v.file_hash, v.file_size, v.file_modified_at, v.scanned_at, v.status, v.note, "
+                "v.measures, v.columns, v.visuals, v.unused_measures, v.broken_refs, " + REVIEW_STATUS_SQL + " AS review "
+                "FROM model_version v LEFT JOIN review r ON r.version_id = v.id WHERE v.model_id = ? "
+                "ORDER BY v.number DESC", (model_id,)))
             model["objects"] = self._objects(con, model["version_id"], model_id) if model["version_id"] else []
             model["visual_list"] = _rows(con.execute(
                 "SELECT v.node, v.report, v.page, v.page_order, v.visual_type, v.title, "
@@ -407,8 +436,8 @@ class Store:
             obj["annotation"] = dict(ann) if ann else {"owner": "", "note": "", "decision": "", "updated_at": "",
                                                        "updated_by": ""}
             obj["history"] = _rows(con.execute(
-                "SELECT o.id, v.number AS version, v.file_modified_at, v.scanned_at, o.table_name, o.name, "
-                "o.expression, o.usage_status FROM object o JOIN model_version v ON v.id = o.version_id "
+                "SELECT o.id, o.version_id, v.number AS version, v.file_modified_at, v.scanned_at, o.kind, o.table_name, "
+                "o.name, o.expression, o.usage_status FROM object o JOIN model_version v ON v.id = o.version_id "
                 "WHERE v.model_id = ? AND o.object_key = ? ORDER BY v.number DESC", (model_id, obj["object_key"])))
             # same name in other models: the cross-model where-used
             obj["elsewhere"] = _rows(con.execute(
@@ -486,3 +515,101 @@ class Store:
                 "FROM annotation a JOIN model m ON m.id = a.model_id "
                 "LEFT JOIN object o ON o.version_id = m.current_version_id AND o.object_key = a.object_key "
                 "WHERE a.decision = ? ORDER BY fold(m.name), fold(o.name)", (decision,)))
+
+    # -- versions and review (milestone 2) ----------------------------------
+
+    def version(self, version_id: int) -> Optional[dict]:
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT v.*, m.name AS model_name, m.path AS model_path, m.kind AS model_kind, "
+                "m.current_version_id = v.id AS is_current, " + REVIEW_STATUS_SQL + " AS review, "
+                "COALESCE(r.reviewer, '') AS reviewer, COALESCE(r.decided_at, '') AS decided_at "
+                "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id "
+                "WHERE v.id = ?", (version_id,)).fetchone()
+            return dict(row) if row else None
+
+    def previous_version(self, version_id: int) -> Optional[dict]:
+        """The latest earlier version of the same model that could be read."""
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT p.id FROM model_version v JOIN model_version p ON p.model_id = v.model_id "
+                "AND p.number < v.number AND p.status != 'error' WHERE v.id = ? ORDER BY p.number DESC LIMIT 1",
+                (version_id,)).fetchone()
+        return self.version(row["id"]) if row else None
+
+    def versions_of(self, model_id: int) -> list:
+        with self.connect() as con:
+            return _rows(con.execute("SELECT id, number, file_modified_at, status FROM model_version "
+                                     "WHERE model_id = ? ORDER BY number DESC", (model_id,)))
+
+    def version_rows(self, version_id: int) -> dict:
+        """Everything stored for one version, for comparing it with another."""
+        with self.connect() as con:
+            objects = _rows(con.execute(
+                "SELECT node, object_key, kind, table_name, name, expression, description, display_folder, "
+                "format_string, data_type, is_hidden, state, in_model, usage_status, usage, id "
+                "FROM object WHERE version_id = ?", (version_id,)))
+            for o in objects:
+                o["usage"] = json.loads(o["usage"]) if o["usage"] else None
+            return {
+                "objects": objects,
+                "dependencies": _rows(con.execute(
+                    "SELECT source, target, kind FROM dependency WHERE version_id = ?", (version_id,))),
+                "visuals": _rows(con.execute(
+                    "SELECT node, report, page, page_order, visual_type, title FROM visual WHERE version_id = ?",
+                    (version_id,))),
+                "usages": [dict(u, roles=json.loads(u["roles"])) for u in _rows(con.execute(
+                    "SELECT visual, field, roles FROM usage WHERE version_id = ?", (version_id,)))],
+            }
+
+    def reviews(self, status: str = "pending", limit: int = 200) -> list:
+        """Versions by review state, newest saves first. ``status`` may also be 'all'."""
+        with self.connect() as con:
+            rows = _rows(con.execute(
+                "SELECT * FROM (SELECT v.id, v.model_id, v.number, v.file_modified_at, v.scanned_at, v.status, "
+                "v.measures, v.visuals, m.name AS model_name, m.owner, m.missing, " + REVIEW_STATUS_SQL +
+                " AS review, COALESCE(r.reviewer, '') AS reviewer, COALESCE(r.decided_at, '') AS decided_at, "
+                "(SELECT COUNT(*) FROM comment c WHERE c.version_id = v.id AND c.kind = 'comment') AS comments "
+                "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id) "
+                "WHERE (? = 'all' AND review NOT IN ('baseline', 'unreadable')) OR review = ? "
+                "ORDER BY file_modified_at DESC, id DESC LIMIT ?", (status, status, limit)))
+        return rows
+
+    def set_review(self, version_id: int, status: str, by: str = "", note: str = "") -> dict:
+        if status not in REVIEW_STATES:
+            raise ValueError(f"review must be one of {', '.join(REVIEW_STATES)}")
+        version = self.version(version_id)
+        if version is None:
+            raise KeyError("no such version")
+        if version["review"] in ("baseline", "unreadable"):
+            raise ValueError("this version has nothing to review: it is the first readable one, or unreadable")
+        by, note = by.strip()[:200], note.strip()[:4000]
+        stamp = now()
+        with self.connect() as con:
+            con.execute(
+                "INSERT INTO review (version_id, status, reviewer, decided_at) VALUES (?,?,?,?) "
+                "ON CONFLICT (version_id) DO UPDATE SET status = excluded.status, reviewer = excluded.reviewer, "
+                "decided_at = excluded.decided_at",
+                (version_id, status, by if status != "pending" else "", stamp if status != "pending" else ""))
+            con.execute("INSERT INTO comment (version_id, object_key, kind, author, body, created_at) "
+                        "VALUES (?, '', ?, ?, ?, ?)", (version_id, status, by, note, stamp))
+        return {"status": status, "reviewer": by, "decided_at": stamp}
+
+    def add_comment(self, version_id: int, body: str, by: str = "", object_key: str = "") -> dict:
+        body = body.strip()[:4000]
+        if not body:
+            raise ValueError("write something first")
+        if self.version(version_id) is None:
+            raise KeyError("no such version")
+        stamp = now()
+        with self.connect() as con:
+            comment_id = con.execute(
+                "INSERT INTO comment (version_id, object_key, kind, author, body, created_at) "
+                "VALUES (?, ?, 'comment', ?, ?, ?)", (version_id, object_key[:200], by.strip()[:200], body, stamp)
+            ).lastrowid
+        return {"id": comment_id, "object_key": object_key, "kind": "comment", "author": by.strip()[:200],
+                "body": body, "created_at": stamp}
+
+    def comments(self, version_id: int) -> list:
+        with self.connect() as con:
+            return _rows(con.execute("SELECT * FROM comment WHERE version_id = ? ORDER BY id", (version_id,)))

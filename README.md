@@ -83,6 +83,36 @@ matched across versions by their Power BI **LineageTag**, which survives renames
 `Total Sales` is still there after it becomes `Net Sales`. A file that fails to read is recorded with
 the reason and does not stop the scan; a file that disappears is kept, marked *file not found*.
 
+### Reviewing each other's changes
+
+Every saved version after the first waits in **Review**. Opening one shows what changed since the
+version before, so a reviewer can approve it without opening Power BI Desktop:
+
+- **Broken references** first: a measure or column that was removed or renamed by hand while a measure or
+  visual still uses it, and everything that still uses it.
+- **Renamed**, matched by LineageTag. Expressions that changed only because they follow the rename are
+  folded away, as are DAX changes that are only formatting or comments.
+- **DAX changed**, as a line diff, with how many visuals the measure feeds and what it now reads or no
+  longer reads.
+- **Added**, **removed** (with the visuals that used it), other property edits (format string, folder,
+  hidden, description), measures that became unused or are used again, and visuals added, removed or
+  given different fields.
+
+Comment on the whole version or on a single change, then **Approve** or **Request changes**. Any two
+versions of a model can be compared. From the terminal, for an e-mail or a Teams post:
+
+```bash
+daxlin workspace review                   # what is waiting
+daxlin workspace changes "Sales"          # the latest version of Sales, as text
+daxlin workspace changes --since 1d       # everything saved since yesterday
+```
+
+![Reviewing a saved version: a broken reference, a rename, a DAX diff with a comment](docs/assets/workspace-review.png)
+
+A synced folder holds only the latest file, so several saves between two scans arrive as one version.
+Scan more often to keep them apart: `serve --scan-every 60` rescans every hour while the page is open, and
+an unchanged file costs almost nothing to check.
+
 **Run the scan every night** with Windows Task Scheduler (or cron on a server):
 
 ```bat
@@ -103,9 +133,10 @@ schtasks /create /tn "Power BI workspace scan" /sc daily /st 02:00 ^
   as *report only* and matched by name; check them before removing anything.
 - PBIP folders and models published to the service are not scanned yet.
 - Who saved a version is not known from a synced folder, only when.
+- Relationships, calculation groups and report-level formatting are not compared yet.
 
-The design behind it, and the milestones that follow (version review, standards, applying changes
-through Power BI Desktop), are in the project's design document.
+The design behind it, and the milestones that follow (standards, then applying changes through
+Power BI Desktop), are in the project's design document.
 
 ## Two ways to use it
 
@@ -326,7 +357,7 @@ not what the engine does with it.
 | `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
 | `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
 | `dax_lineage/offline.py`, `serve.py` | the single-file offline page, and `daxlin serve` |
-| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
+| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `diff.py` (what changed between versions), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
 | `docs/dax-lineage-explorer.html` | the offline page, built from docs/ by `scripts/build_offline.py` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
@@ -340,7 +371,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 83 Python tests
+python3 -m pytest tests -q                  # 95 Python tests
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/
