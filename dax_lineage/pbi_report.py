@@ -270,19 +270,20 @@ def model_rows(schema) -> Optional[dict]:
     tables, columns, measures, relationships = [], [], [], []
     for index, table in enumerate(model["tables"], start=1):
         tables.append({"ID": index, "Name": table.get("name"), "Description": _lines(table.get("description")),
-                       "IsHidden": bool(table.get("isHidden"))})
+                       "IsHidden": bool(table.get("isHidden")), "LineageTag": table.get("lineageTag") or ""})
         for column in table.get("columns") or []:
             if column.get("type") == "rowNumber":
                 continue
             columns.append({"TableID": index, "ExplicitName": column.get("name"),
                             "Expression": _lines(column.get("expression")) if column.get("type") == "calculated" else "",
                             "IsHidden": bool(column.get("isHidden")), "DisplayFolder": column.get("displayFolder") or "",
-                            "DataType": column.get("dataType") or "", "SortByColumn": column.get("sortByColumn") or ""})
+                            "DataType": column.get("dataType") or "", "SortByColumn": column.get("sortByColumn") or "",
+                            "LineageTag": column.get("lineageTag") or ""})
         for measure in table.get("measures") or []:
             measures.append({"TableID": index, "Name": measure.get("name"), "Expression": _lines(measure.get("expression")),
                              "DisplayFolder": measure.get("displayFolder") or "", "IsHidden": bool(measure.get("isHidden")),
                              "Description": _lines(measure.get("description")), "FormatString": measure.get("formatString") or "",
-                             "State": "Ready"})
+                             "State": "Ready", "LineageTag": measure.get("lineageTag") or ""})
     for rel in model.get("relationships") or []:
         relationships.append({"FromTable": rel.get("fromTable"), "FromColumn": rel.get("fromColumn"),
                               "ToTable": rel.get("toTable"), "ToColumn": rel.get("toColumn"),

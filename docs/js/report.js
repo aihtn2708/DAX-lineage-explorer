@@ -222,17 +222,17 @@
     if (!model || !Array.isArray(model.tables)) return null;
     const tables = [], columns = [], measures = [], relationships = [];
     model.tables.forEach((t, ti) => {
-      tables.push({ ID: ti + 1, Name: t.name, Description: joinLines(t.description), IsHidden: !!t.isHidden });
+      tables.push({ ID: ti + 1, Name: t.name, Description: joinLines(t.description), IsHidden: !!t.isHidden, LineageTag: t.lineageTag || "" });
       for (const c of t.columns || []) {
         if (c.type === "rowNumber") continue;
         columns.push({ TableID: ti + 1, ExplicitName: c.name, Expression: c.type === "calculated" ? joinLines(c.expression) : "",
           IsHidden: !!c.isHidden, DisplayFolder: c.displayFolder || "", DataType: c.dataType || "",
-          SortByColumn: c.sortByColumn || "" });
+          SortByColumn: c.sortByColumn || "", LineageTag: c.lineageTag || "" });
       }
       for (const m of t.measures || []) {
         measures.push({ TableID: ti + 1, Name: m.name, Expression: joinLines(m.expression),
           DisplayFolder: m.displayFolder || "", IsHidden: !!m.isHidden, Description: joinLines(m.description),
-          FormatString: m.formatString || "", State: "Ready" });
+          FormatString: m.formatString || "", State: "Ready", LineageTag: m.lineageTag || "" });
       }
     });
     for (const r of model.relationships || []) {
