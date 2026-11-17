@@ -12,6 +12,8 @@
                    %LOCALAPPDATA%\PowerBIWorkspace\tom (skip it if Tabular Editor 2 or the
                    SqlServer PowerShell module is installed; the companion finds those)
     -TomPath       a folder that already holds Microsoft.AnalysisServices.Tabular.dll
+    -Token         your API token from the workspace's My account page, when it uses sign-in;
+                   kept in %APPDATA%\PowerBIWorkspace\companion.json, readable only by you
 
     Writing to Desktop's External Tools folder needs administrator rights. Without them the
     registration file is written here, with the command to copy it. Restart Power BI Desktop
@@ -20,7 +22,8 @@
 param(
     [string] $Workspace = "http://127.0.0.1:8766",
     [switch] $DownloadTom,
-    [string] $TomPath = ""
+    [string] $TomPath = "",
+    [string] $Token = ""
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -50,6 +53,16 @@ if ($DownloadTom) {
 
 [System.IO.File]::WriteAllText((Join-Path $here "companion.config.json"), (ConvertTo-Json $config), $utf8)
 Write-Host "Workspace address: $($config.workspace)"
+
+if ($Token) {
+    $mine = Join-Path $env:APPDATA "PowerBIWorkspace"
+    New-Item -ItemType Directory -Force -Path $mine | Out-Null
+    $file = Join-Path $mine "companion.json"
+    [System.IO.File]::WriteAllText($file, (ConvertTo-Json ([ordered]@{ token = $Token })), $utf8)
+    # readable by this user only
+    & icacls $file /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
+    Write-Host "Your token is saved in $file"
+}
 
 $tool = Get-Content (Join-Path $here "PowerBIWorkspace.pbitool.template.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $tool.path = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"

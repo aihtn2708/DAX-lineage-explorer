@@ -77,10 +77,10 @@ def test_removal_refused_while_a_visual_shows_it(ws):
 
 
 def test_warnings_for_keep_decisions_and_other_reports(ws, tmp_path, pbit):
-    store, model, keys, _ = ws
+    store, model, keys, pbix = ws
     store.annotate(model["id"], keys["Sales QTD"], decision="keep", by="Hoa")
     import shutil
-    shutil.copy(Path(pbit).parent / "sales.pbix", Path(store.path).parent / "BI" / "Thin report.pbix")
+    shutil.copy(Path(pbit).parent / "sales.pbix", pbix.parent / "Thin report.pbix")
     scan_folders(store)
     warnings = CH.plan(store, model["id"], [remove(keys["Sales QTD"]), remove(keys["Discount Impact"])])["warnings"]
     assert any("marked keep by Hoa" in w for w in warnings)

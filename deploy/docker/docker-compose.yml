@@ -1,0 +1,41 @@
+# The Power BI workspace and its Postgres database on a Linux server, with workspace passwords.
+#
+#   export WORKSPACE_DB_PASSWORD=...   PBIX_FOLDER=/srv/onedrive/BI-Reports   WORKSPACE_HOST=bi-workspace.contoso.local
+#   docker compose run --rm workspace python -m dax_lineage workspace users add linh --role admin --password
+#   docker compose run --rm workspace python -m dax_lineage workspace add-folder /data/pbix
+#   docker compose up -d
+#
+# Put HTTPS in front (your usual reverse proxy) and keep the port off the internet.
+# The .pbix folders the scan reads are mounted read-only from the host; see deploy/README.md.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: workspace
+      POSTGRES_PASSWORD: ${WORKSPACE_DB_PASSWORD:?set WORKSPACE_DB_PASSWORD}
+      POSTGRES_DB: powerbi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  workspace:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    environment:
+      DAXLIN_WORKSPACE_DB: postgresql://workspace:${WORKSPACE_DB_PASSWORD}@db/powerbi
+    command: >
+      python -m dax_lineage workspace serve --host 0.0.0.0 --port 8766 --no-open
+      --auth local --secure-cookies --allow-host ${WORKSPACE_HOST:-bi-workspace.contoso.local}
+      --scan-every 60
+    ports:
+      - "127.0.0.1:8766:8766"
+    volumes:
+      - ${PBIX_FOLDER:-./pbix}:/data/pbix:ro
+      - ./backups:/backups
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  pgdata:

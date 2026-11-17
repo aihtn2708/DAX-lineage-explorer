@@ -13,6 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]
 daxlin = "dax_lineage.cli:main"

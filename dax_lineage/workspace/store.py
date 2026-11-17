@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-SCHEMA_VERSION = 4
+from .db import mask, open_database
+
+SCHEMA_VERSION = 5
 DECISIONS = ("", "keep", "remove")
 REVIEW_STATES = ("pending", "approved", "changes_requested")
 
@@ -232,6 +232,40 @@ CREATE TABLE IF NOT EXISTS change_event (
     body       TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account (
+    id            INTEGER PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    display_name  TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT 'viewer',
+    password_hash TEXT NOT NULL DEFAULT '',
+    disabled      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS login_session (
+    token_hash TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES account(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_token (
+    token_hash   TEXT PRIMARY KEY,
+    prefix       TEXT NOT NULL,
+    account_id   INTEGER NOT NULL REFERENCES account(id),
+    name         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS audit (
+    id       INTEGER PRIMARY KEY,
+    at       TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    action   TEXT NOT NULL,
+    target   TEXT NOT NULL DEFAULT '',
+    detail   TEXT NOT NULL DEFAULT '',
+    address  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS audit_at_idx ON audit (at);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
@@ -261,44 +295,30 @@ def default_db_path() -> Path:
     return Path(os.environ.get("DAXLIN_WORKSPACE_DB") or "pbi-workspace.db")
 
 
-def _fold(text) -> str:
-    return (text or "").casefold()
-
-
 def _rows(cursor) -> list:
     return [dict(r) for r in cursor.fetchall()]
 
 
 class Store:
-    def __init__(self, path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, location):
+        self.db = open_database(location)
+        self.kind = self.db.kind
+        self.path = self.db.path          # a Path for SQLite, the connection URL for Postgres
+        self.location = mask(location)    # for messages: no password
         with self.connect() as con:
             con.executescript(SCHEMA)
             found = con.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
             if found is None:
                 con.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
             elif int(found["value"]) > SCHEMA_VERSION:
-                raise RuntimeError(f"{self.path} was made by a newer daxlin (schema {found['value']}); update daxlin")
+                raise RuntimeError(f"{self.location} was made by a newer daxlin (schema {found['value']}); update daxlin")
             elif int(found["value"]) < SCHEMA_VERSION:
                 # every change so far only adds tables, which the script above has just created
                 con.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
 
-    @contextmanager
     def connect(self):
-        con = sqlite3.connect(self.path, timeout=30)
-        con.row_factory = sqlite3.Row
-        con.create_function("fold", 1, _fold, deterministic=True)
-        con.execute("PRAGMA foreign_keys = ON")
-        con.execute("PRAGMA journal_mode = WAL")
-        try:
-            yield con
-            con.commit()
-        except BaseException:
-            con.rollback()
-            raise
-        finally:
-            con.close()
+        """A connection in a transaction: committed when the block ends, rolled back on an error."""
+        return self.db.connect()
 
     # -- folders ----------------------------------------------------------
 
@@ -311,7 +331,11 @@ class Store:
     def remove_folder(self, path) -> bool:
         path = str(Path(path).expanduser().resolve())
         with self.connect() as con:
-            return con.execute("DELETE FROM folder WHERE path = ?", (path,)).rowcount > 0
+            row = con.execute("SELECT id FROM folder WHERE path = ?", (path,)).fetchone()
+            if row is None:
+                return False
+            con.execute("UPDATE model SET folder_id = NULL WHERE folder_id = ?", (row["id"],))
+            return con.execute("DELETE FROM folder WHERE id = ?", (row["id"],)).rowcount > 0
 
     def folders(self) -> list:
         with self.connect() as con:
@@ -656,7 +680,7 @@ class Store:
                 "v.measures, v.visuals, m.name AS model_name, m.owner, m.missing, " + REVIEW_STATUS_SQL +
                 " AS review, COALESCE(r.reviewer, '') AS reviewer, COALESCE(r.decided_at, '') AS decided_at, "
                 "(SELECT COUNT(*) FROM comment c WHERE c.version_id = v.id AND c.kind = 'comment') AS comments "
-                "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id) "
+                "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id) AS q "
                 "WHERE (? = 'all' AND review NOT IN ('baseline', 'unreadable')) OR review = ? "
                 "ORDER BY file_modified_at DESC, id DESC LIMIT ?", (status, status, limit)))
         return rows

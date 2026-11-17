@@ -102,8 +102,26 @@ What protects it:
 - The page loads its script and styles only from the workspace server and may
   call only it (`script-src 'self'; connect-src 'self'`). Everything read from a
   `.pbix` is shown as text, never as HTML.
-- There are **no sign-ins yet**. On a shared server, put it behind a proxy that
-  signs people in, or use `--read-only`.
+- Beyond 127.0.0.1 it needs sign-in (`--auth iis`, `local` or `windows`) or
+  `--read-only`, and refuses to start otherwise.
+- **Sign-in.** With `--auth iis`, IIS signs people in with Windows and hands the
+  workspace each request's Windows token, which it turns into DOMAIN\user and
+  closes. With `--auth local`, passwords are stored as PBKDF2-SHA256 hashes
+  (310,000 rounds); the session cookie is HttpOnly and SameSite=Strict (add
+  `--secure-cookies` behind HTTPS); five failed sign-ins lock a name or an
+  address out for 15 minutes. With `--auth windows`, the user header is
+  believed only from `--trusted-proxy` addresses.
+- **Roles** are checked by the server on every change, not by the page. Names
+  recorded with notes, reviews and changes come from the sign-in. Nobody
+  approves their own change unless `--allow-self-approval` is set.
+- **API tokens** (for the companion and scripts) are stored as SHA-256 hashes,
+  shown once, and can be revoked by their owner; `last used` shows when.
+- **The audit log** records every change, sign-in, failed sign-in and refused
+  attempt, with who, when and from which address. Passwords and tokens never
+  appear in it.
+- **Backups** (`daxlin workspace backup`) hold password and token hashes, not
+  passwords or tokens, but they hold everything else: store them like the
+  database.
 
 The Desktop companion (`daxlin workspace companion`) is the only part that
 changes a model, and only the one open in Power BI Desktop on that PC:
@@ -116,9 +134,8 @@ changes a model, and only the one open in Power BI Desktop on that PC:
   first, and if Desktop refuses any edit it undoes them all;
 - nothing is saved to the .pbix until the user saves it in Desktop.
 
-It calls the workspace's API without a browser, so a server reachable from
-other PCs accepts those calls from anyone who can reach it: another reason to
-keep the server on 127.0.0.1 or behind a proxy that signs people in.
+It calls the workspace's API with the person's own Windows sign-in (behind
+IIS) or their personal token, so the server applies the same roles to it.
 
 ## Reporting a vulnerability
 
