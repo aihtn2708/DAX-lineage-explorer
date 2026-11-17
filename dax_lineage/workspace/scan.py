@@ -203,12 +203,18 @@ def _scan_file(store: Store, path: Path, resolved: str, folder_id, force: bool, 
     saved = store.record_version(path=resolved, name=path.stem, folder_id=folder_id, file_hash=digest,
                                  file_size=stat.st_size, file_modified_at=modified, **rows)
     summary["new_versions"] += 1
+    if rows["status"] != "error":
+        from .check import check_version
+        checked = check_version(store, saved["version_id"])
+        if checked:
+            rows["counts"]["score"] = checked["score"]
     if rows["status"] == "error":
         summary["failed"] += 1
         say(f"error   {path.name} v{saved['number']}: {rows['note']}")
     else:
         c = rows["counts"]
         what = (f"{c.get('measures', 0)} measures, {c.get('visuals', 0)} visuals"
-                + (f", {c['unused_measures']} unused measures" if c.get("unused_measures") else ""))
+                + (f", {c['unused_measures']} unused measures" if c.get("unused_measures") else "")
+                + (f", standards score {c['score']}" if "score" in c else ""))
         say(f"{'new' if not current else 'changed'}{' ' * (8 - len('new' if not current else 'changed'))}"
             f"{path.name} v{saved['number']}: {what}" + (f" ({rows['note']})" if rows["status"] != "ok" else ""))

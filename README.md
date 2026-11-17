@@ -113,6 +113,41 @@ A synced folder holds only the latest file, so several saves between two scans a
 Scan more often to keep them apart: `serve --scan-every 60` rescans every hour while the page is open, and
 an unchanged file costs almost nothing to check.
 
+### Standards: one rule set, a score per model
+
+Every scanned version is checked against the team's rules, and each model gets a score from 0 to 100:
+the weighted share of checks it passes (errors count 3, warnings 2, notes 1).
+
+| Rule | Default |
+|---|---|
+| Nothing uses a field the model does not have (broken measure or visual references) | error |
+| Every measure is in the Ready state | error |
+| Every measure is used (needs the report in the file) | warning |
+| Visible measures have a description; and a format string | warning |
+| Divide with `DIVIDE`, not `/` | warning |
+| Measure names are tidy (no stray spaces), optionally matching a pattern you set | warning |
+| Measures in busy tables sit in display folders; helper measures (`_name`) are hidden | note |
+| Hidden columns are used by something; avoid `IFERROR`; no two measures with the same DAX | note |
+| Visible columns have a description; measure chains stay shallow | off |
+
+- **Standards** shows every model's score and how it moved since the last version, the findings
+  per owner (the object's owner, else the model's), and the rules. Turn a rule on or off, change its
+  severity or settings, and every model is checked again.
+- **Exceptions**: on a measure's page, accept a finding with a reason ("the denominator is never zero").
+  It stops counting against the score, and the reason stays visible to everyone.
+- **Reviews** show the score before and after, and which findings the save added or fixed.
+- **Agree the rules once**: `daxlin workspace rules export -o rules.json` writes the rule set to keep in git
+  or hand to another team; `rules import rules.json` loads it.
+
+```bash
+daxlin workspace check                       # findings per model; exits 1 if any error is open
+daxlin workspace check "Sales" --min warning
+daxlin workspace rules set measure-naming --param "pattern=^[A-Z%]"
+daxlin workspace rules set column-description --on --severity warning
+```
+
+![Standards: scores per model, findings per owner, and the rule set](docs/assets/workspace-standards.png)
+
 **Run the scan every night** with Windows Task Scheduler (or cron on a server):
 
 ```bat
@@ -135,8 +170,8 @@ schtasks /create /tn "Power BI workspace scan" /sc daily /st 02:00 ^
 - Who saved a version is not known from a synced folder, only when.
 - Relationships, calculation groups and report-level formatting are not compared yet.
 
-The design behind it, and the milestones that follow (standards, then applying changes through
-Power BI Desktop), are in the project's design document.
+The design behind it, and the milestone that follows (applying cleanups, descriptions and renames
+through Power BI Desktop), are in the project's design document.
 
 ## Two ways to use it
 
@@ -357,7 +392,7 @@ not what the engine does with it.
 | `dax_lineage/pbix_model.py` | reads the model inside a .pbix: XPress9, the backup stream, metadata.sqlitedb |
 | `docs/` | the GitHub Pages site: `index.html`, `js/lineage.js` (the scanner, graph and usage, ported), `js/report.js` (the report reader, ported), `js/zip.js`, `js/xlsx.js`, `js/xpress9.js`, `js/sqlite.js`, `js/pbixmodel.js` (dependency-free readers), `js/viewer.js` |
 | `dax_lineage/offline.py`, `serve.py` | the single-file offline page, and `daxlin serve` |
-| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `diff.py` (what changed between versions), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
+| `dax_lineage/workspace/` | the team workspace: `store.py` (the SQLite schema), `scan.py` (folders to versions), `diff.py` (what changed between versions), `rules.py` and `check.py` (the standards), `app.py` and `static/` (the local web app), `cli.py` (`daxlin workspace`) |
 | `docs/dax-lineage-explorer.html` | the offline page, built from docs/ by `scripts/build_offline.py` |
 | `docs/samples/` | the downloadable samples: workbooks from `scripts/make_samples.py`, reports from `scripts/make_report_samples.py` |
 | `queries/` | the `INFO.*` DAX queries, also served from the site |
@@ -371,7 +406,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 95 Python tests
+python3 -m pytest tests -q                  # 107 Python tests
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
 python3 scripts/make_samples.py             # rebuild docs/samples/*.xlsx and docs/queries/

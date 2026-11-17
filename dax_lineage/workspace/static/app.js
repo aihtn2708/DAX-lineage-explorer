@@ -113,6 +113,7 @@ async function homeView() {
       { label: "Visuals", num: true, cell: (m) => n(m.visuals) },
       { label: "Unused measures", num: true, cell: (m) => (m.status !== "ok" || !m.has_report ? h("span", { class: "muted" }, "–")
         : m.unused_measures ? h("b", { class: "err" }, n(m.unused_measures)) : "0") },
+      { label: "Score", num: true, cell: (m) => scoreText(m.score) },
       { label: "Owner", cell: (m) => m.owner },
     ], models, "No models yet: add a folder and scan it."),
     live.length !== models.length ? h("p", { class: "muted small" }, "Files no longer found are kept with their history.") : null,
@@ -206,7 +207,9 @@ async function modelView(id, params) {
       tile(m.visuals, `visuals on ${m.pages} pages`),
       tile(m.unused_measures, "unused measures", m.unused_measures > 0),
       tile(m.unused_columns, "unused columns", m.unused_columns > 0),
-      tile(m.broken_refs, "visual fields missing", m.broken_refs > 0)),
+      tile(m.broken_refs, "visual fields missing", m.broken_refs > 0),
+      m.check ? h("a", { class: "tile", href: "#standards", onclick: (e) => { e.preventDefault(); document.getElementById("standards").scrollIntoView(); } },
+        h("b", {}, scoreText(m.check.score)), h("span", {}, "standards score")) : null),
     h("div", { class: "grid2" },
       h("div", {},
         h("div", { class: "bar" },
@@ -215,7 +218,12 @@ async function modelView(id, params) {
           h("input", { type: "search", class: "grow", placeholder: "Filter by name or folder", oninput: (e) => { state.text = e.target.value; drawList(); } })),
         listBox,
         m.kind === "model" && !m.has_report ? h("p", { class: "muted small" }, "No report in this file, so usage is unknown.") : null,
-        h("p", { class: "muted small" }, "Unused here means unused in this file's own report. Reports on the published model are listed under Models as report only; check them before removing anything.")),
+        h("p", { class: "muted small" }, "Unused here means unused in this file's own report. Reports on the published model are listed under Models as report only; check them before removing anything."),
+        h("h2", { id: "standards" }, m.check ? `Standards: score ${m.check.score}` : "Standards"),
+        m.check ? [h("p", { class: "muted small" }, `${plural(m.check.errors, "error")}, ${plural(m.check.warnings, "warning")}, ${plural(m.check.infos, "note")}`
+          + (m.check.accepted ? `, ${m.check.accepted} accepted as exceptions` : "") + ". Open a finding's object to accept it as an exception."),
+          findingsTable(m.check.findings, false)]
+          : h("p", { class: "muted" }, "Not checked: no model was read from this file.")),
       h("div", {},
         h("h2", {}, "About this model"),
         h("div", { class: "panel form" },
@@ -231,6 +239,7 @@ async function modelView(id, params) {
     ),
   );
   drawList();
+  if (params.get("view") === "standards") document.getElementById("standards").scrollIntoView();
 }
 
 async function objectView(id) {
@@ -318,6 +327,7 @@ async function objectView(id) {
           h("div", { class: "bar" }, h("button", { class: "primary", onclick: save, disabled: readOnly }, "Save"), saved),
           a.updated_at ? h("div", { class: "muted small" }, `Last changed ${fmtDate(a.updated_at)}${a.updated_by ? ` by ${a.updated_by}` : ""}`) : null,
           h("div", { class: "muted small" }, "Notes follow this object through renames and new versions.")),
+        o.is_current ? [h("h2", {}, "Standards"), findingsPanel(o, readOnly)] : null,
         h("h2", {}, "History"),
         h("ul", { class: "plain panel" }, changes.map((v) => h("li", {},
           h("a", { href: `#/object/${v.id}` }, `v${v.version}`), ` ${fmtDate(v.file_modified_at)}  `,
@@ -471,6 +481,7 @@ async function versionView(id, params) {
           tile(c.broken, "broken references", c.broken > 0), tile(c.dax, "DAX changes"), tile(c.renamed, "renamed"),
           tile(c.added, "added"), tile(c.removed, "removed"), tile(c.visuals, "visuals changed")),
         !c.total ? h("div", { class: "empty" }, "No change to measures, columns or visuals. Something else in the file changed, such as data or formatting.") : null,
+        standardsDelta(r.standards),
         section("Broken: used, but no longer in the model", r.broken, (b) => h("div", { class: "change" },
           h("div", { class: "change-head" }, h("b", { class: "err" }, b.label)),
           h("div", { class: "small" }, "Still used by: ", b.used_by.join(", ")))),
@@ -532,6 +543,167 @@ async function versionView(id, params) {
   );
 }
 
+
+// -- milestone 3: standards ---------------------------------------------------
+
+const SEV_LABEL = { error: "error", warning: "warning", info: "note" };
+const sev = (level) => h("span", { class: `sev ${level}` }, SEV_LABEL[level] || level);
+const scoreText = (value, previous) => {
+  if (value === null || value === undefined) return h("span", { class: "muted" }, "–");
+  const cls = value >= 85 ? "high" : value >= 65 ? "mid" : "low";
+  const delta = previous === null || previous === undefined || previous === value ? null
+    : h("span", { class: `delta ${value > previous ? "up" : "down"}` }, `${value > previous ? "▲" : "▼"} ${Math.abs(value - previous)}`);
+  return h("span", {}, h("span", { class: `score ${cls}` }, value), delta);
+};
+
+async function standardsView(params) {
+  const data = await api("/api/standards");
+  const readOnly = summaryCache ? summaryCache.read_only : false;
+  const by = h("input", { value: me(), placeholder: "your name" });
+  const status = h("span", { class: "small" });
+  const change = async (rule, body) => {
+    setMe(by.value);
+    try {
+      await api(`/api/rules/${rule.id}`, { ...body, by: by.value });
+      await standardsView(params);
+    } catch (err) {
+      status.className = "err small";
+      status.textContent = `${rule.id}: ${err.message}`;
+    }
+  };
+  const exportRules = async () => {
+    const json = JSON.stringify(await api("/api/rules/export"), null, 2);
+    const link = h("a", { href: URL.createObjectURL(new Blob([json], { type: "application/json" })), download: "power-bi-rules.json" });
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
+  const importInput = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: async (e) => {
+    try {
+      const body = JSON.parse(await e.target.files[0].text());
+      await api("/api/rules/import", { ...body, by: by.value });
+      await standardsView(params);
+    } catch (err) {
+      status.className = "err small";
+      status.textContent = `Import: ${err.message}`;
+    }
+  } });
+
+  const paramInputs = (rule) => Object.entries(rule.params).map(([key, value]) => {
+    const input = h("input", { class: "param", value: String(value), placeholder: key, title: key, disabled: readOnly });
+    input.addEventListener("change", () => change(rule, { params: { [key]: input.value } }));
+    return h("div", { class: "small" }, `${key.replace("_", " ")} `, input);
+  });
+
+  show(
+    h("h1", {}, "Standards"),
+    h("p", { class: "sub" }, "The rules every model is checked against on each scan. Change one and every model is checked again."),
+    h("div", { class: "tiles" },
+      tile(data.average, "average score"),
+      tile(data.models.reduce((a, m) => a + m.errors, 0), "errors", data.models.some((m) => m.errors)),
+      tile(data.models.reduce((a, m) => a + m.warnings, 0), "warnings"),
+      tile(data.exceptions.length, "accepted exceptions")),
+    h("div", { class: "grid2" },
+      h("div", {},
+        h("h2", {}, "Models"),
+        table([
+          { label: "Model", cell: (m) => h("a", { href: `#/model/${m.id}?view=standards` }, m.name) },
+          { label: "Score", num: true, cell: (m) => scoreText(m.score, m.previous_score) },
+          { label: "Errors", num: true, cell: (m) => (m.errors ? h("b", { class: "err" }, m.errors) : "0") },
+          { label: "Warnings", num: true, cell: (m) => m.warnings },
+          { label: "Notes", num: true, cell: (m) => m.infos },
+          { label: "Owner", cell: (m) => m.owner },
+        ], data.models, "No checked models yet: scan a folder first."),
+        h("h2", {}, "Rules"),
+        table([
+          { label: "On", cell: (r) => h("input", { type: "checkbox", checked: r.enabled, disabled: readOnly, "aria-label": `${r.title} on`,
+            onchange: (e) => change(r, { enabled: e.target.checked }) }) },
+          { label: "Rule", cell: (r) => [h("div", {}, r.title), h("div", { class: "why" }, r.why), paramInputs(r)] },
+          { label: "Severity", cell: (r) => h("select", { disabled: readOnly, onchange: (e) => change(r, { severity: e.target.value }) },
+            ["error", "warning", "info"].map((x) => h("option", { value: x, selected: x === r.severity }, SEV_LABEL[x]))) },
+          { label: "Open", num: true, cell: (r) => (r.enabled ? (r.open ? `${r.open} in ${plural(r.models, "model")}` : "0") : "") },
+        ].map((c) => ({ ...c })), data.rules),
+        h("div", { class: "bar" },
+          h("label", { class: "check" }, "Your name ", by),
+          h("span", { class: "grow" }),
+          h("button", { onclick: exportRules }, "Export rules"),
+          h("button", { disabled: readOnly, onclick: () => importInput.click() }, "Import rules"), importInput,
+          h("button", { disabled: readOnly, onclick: async () => { await api("/api/rules/reset", {}); await standardsView(params); } }, "Reset to defaults")),
+        status),
+      h("div", {},
+        h("h2", {}, "Open findings by owner"),
+        table([
+          { label: "Owner", cell: (o) => h("a", { href: `#/standards/owner?name=${encodeURIComponent(o.owner)}` }, o.owner || "nobody yet") },
+          { label: "Errors", num: true, cell: (o) => (o.errors ? h("b", { class: "err" }, o.errors) : "0") },
+          { label: "Warnings", num: true, cell: (o) => o.warnings },
+          { label: "Notes", num: true, cell: (o) => o.infos },
+        ], data.owners, "Nothing open."),
+        h("p", { class: "muted small" }, "An object's owner, or else its model's owner. Set them on the model and measure pages."),
+        h("h2", {}, `Accepted exceptions (${data.exceptions.length})`),
+        data.exceptions.length ? h("ul", { class: "plain panel" }, data.exceptions.map((e) => h("li", {},
+          h("b", {}, e.rule_id), ` in ${e.model_name}`, h("div", { class: "small" }, e.reason),
+          h("div", { class: "muted small" }, `${e.created_by || "someone"}, ${fmtDate(e.created_at)}`)))) : h("p", { class: "muted" }, "None."))),
+  );
+  document.querySelectorAll("tbody tr").forEach((tr) => {
+    const box = tr.querySelector("input[type=checkbox]");
+    if (box && !box.checked) tr.classList.add("rule-off");
+  });
+}
+
+async function ownerView(params) {
+  const name = params.get("name") || "";
+  const rows = await api(`/api/standards/owner?name=${encodeURIComponent(name)}`);
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/standards" }, "Standards"), " › ", name || "nobody yet"),
+    h("h1", {}, name ? `Findings for ${name}` : "Findings with no owner"),
+    h("p", { class: "sub" }, `${plural(rows.length, "open finding")} across ${plural(new Set(rows.map((r) => r.model_id)).size, "model")}`),
+    findingsTable(rows, true),
+  );
+}
+
+function findingsTable(rows, withModel) {
+  return table([
+    { label: "", cell: (f) => sev(f.severity) },
+    { label: "Object", cell: (f) => (f.object_id ? h("a", { href: `#/object/${f.object_id}` }, f.label) : f.label) },
+    withModel ? { label: "Model", cell: (f) => h("a", { href: `#/model/${f.model_id}?view=standards` }, f.model_name) } : null,
+    { label: "Rule", cell: (f) => h("span", { class: "nowrap" }, f.rule_id) },
+    { label: "Finding", cell: (f) => [f.message, f.accepted ? h("span", { class: "muted small" }, "  (accepted)") : null] },
+  ].filter(Boolean), rows, "Nothing to fix.");
+}
+
+function findingsPanel(o, readOnly) {
+  if (!o.findings || !o.findings.length) return h("p", { class: "muted small" }, "Meets every rule that is on.");
+  const by = h("input", { value: me(), placeholder: "your name" });
+  return h("div", { class: "panel" }, o.findings.map((f) => {
+    const reason = h("input", { placeholder: "why this is fine here" });
+    const send = async (body) => {
+      setMe(by.value);
+      await api("/api/exceptions", { model_id: o.model_id, object_key: o.object_key, rule_id: f.rule_id, by: by.value, ...body });
+      route();
+    };
+    return h("div", { class: "finding" },
+      h("div", {}, sev(f.severity), "  ", h("b", {}, f.title)),
+      h("div", { class: "small" }, f.message),
+      f.accepted ? h("div", { class: "small muted" }, `Accepted by ${f.created_by || "someone"}: ${f.reason}  `,
+        h("button", { disabled: readOnly, onclick: () => send({ remove: true }) }, "Withdraw"))
+        : h("details", {}, h("summary", { class: "small" }, "Accept as an exception"),
+          h("div", { class: "form" }, reason, by, h("div", {}, h("button", { disabled: readOnly, onclick: () => send({ reason: reason.value }) }, "Accept")))));
+  }));
+}
+
+function standardsDelta(st) {
+  if (!st) return null;
+  return [h("h2", {}, "Standards"),
+    h("div", { class: "change" },
+      h("div", { class: "change-head" }, "Score ", st.previous !== null ? [scoreText(st.previous), "  →  "] : null, scoreText(st.score, st.previous),
+        st.previous_stale ? h("span", { class: "muted small" }, "  (the earlier score was under other rules)") : null),
+      st.new.length ? [h("div", { class: "small" }, h("b", {}, `New findings (${st.new.length})`)),
+        h("ul", { class: "plain" }, st.new.map((f) => h("li", { class: "small" }, sev(f.severity), "  ", f.object_id ? h("a", { href: `#/object/${f.object_id}` }, f.label) : f.label, `: ${f.message}`)))] : null,
+      st.fixed.length ? [h("div", { class: "small" }, h("b", {}, `Fixed (${st.fixed.length})`)),
+        h("ul", { class: "plain" }, st.fixed.map((f) => h("li", { class: "small" }, sev(f.severity), `  ${f.label}: ${f.message}`)))] : null,
+      !st.new.length && !st.fixed.length ? h("div", { class: "muted small" }, "No findings new or fixed.") : null)];
+}
+
 // -- routing ------------------------------------------------------------------
 
 async function route() {
@@ -547,6 +719,8 @@ async function route() {
     else if (path === "/search") await searchView(params);
     else if (path === "/decisions") await decisionsView(params);
     else if (path === "/review") await reviewQueueView(params);
+    else if (path === "/standards") await standardsView(params);
+    else if (path === "/standards/owner") await ownerView(params);
     else if ((match = path.match(/^\/version\/(\d+)$/))) await versionView(match[1], params);
     else await homeView();
   } catch (err) {
