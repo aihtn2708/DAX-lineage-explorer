@@ -101,6 +101,59 @@ function table(columns, rows, empty) {
 
 // -- views --------------------------------------------------------------------
 
+// the folders the scan reads: paste a path, or pick one with the system's dialog
+function foldersPanel(summary) {
+  const admin = can("admin") && !summary.read_only;
+  const box = h("div", { class: summary.folders.length ? "panel" : "panel notice" });
+  const path = h("input", { placeholder: "C:\\Users\\you\\OneDrive - Contoso\\BI - Reports", class: "grow" });
+  const say = h("span", { class: "small" });
+  const fail = (err) => { say.className = "err small"; say.textContent = err.message; };
+  const add = async () => {
+    say.className = "small muted";
+    say.textContent = "Adding…";
+    try {
+      const done = await api("/api/folders", { path: path.value, scan: true });
+      lastScanLog = [];
+      await homeView();
+      if (done.scanning) pollScan();
+    } catch (err) { fail(err); }
+  };
+  const browse = async (event) => {
+    const button = event.target;
+    button.disabled = true;
+    say.className = "small muted";
+    say.textContent = "A folder window has opened on this PC (it may be behind the browser).";
+    try {
+      const picked = await api("/api/folders/browse", {});
+      if (picked.path) { path.value = picked.path; say.textContent = ""; await add(); }
+      else say.textContent = "No folder chosen.";
+    } catch (err) { fail(err); }
+    button.disabled = false;
+  };
+  const remove = async (folder) => {
+    try { await api("/api/folders/remove", { path: folder.path }); await homeView(); } catch (err) { fail(err); }
+  };
+  (async () => {
+    const info = await api("/api/folders").catch(() => ({ folders: summary.folders, can_browse: false }));
+    fill(box,
+      info.folders.length ? [h("b", {}, "Folders the scan reads"),
+        h("ul", { class: "plain" }, info.folders.map((f) => h("li", {},
+          h("code", {}, f.path), "  ",
+          f.exists ? h("span", { class: "muted small" }, plural(f.models, "file")) : h("span", { class: "err small" }, "not found on this PC"),
+          admin ? ["  ", h("button", { onclick: () => remove(f) }, "Remove")] : null)))]
+        : [h("b", {}, "Start here: choose the folder with your .pbix files"),
+          h("p", { class: "small" }, "Usually the SharePoint library OneDrive syncs to this PC. Its subfolders are read too, and files are only read, never changed.")],
+      admin ? h("div", { class: "bar" }, path,
+        info.can_browse ? h("button", { onclick: browse }, "Browse…") : null,
+        h("button", { class: "primary", onclick: add }, "Add and scan")) : null,
+      admin ? h("div", { class: "muted small" }, info.can_browse
+        ? "Browse opens a folder window on this PC. Or paste a path: in File Explorer, click the address bar and copy it."
+        : "In File Explorer, click the address bar, copy the path, and paste it here.") : null,
+      say);
+  })();
+  return box;
+}
+
 async function homeView() {
   const [summary, models] = await Promise.all([api("/api/summary"), api("/api/models")]);
   summaryCache = summary;
@@ -111,9 +164,7 @@ async function homeView() {
   const live = models.filter((m) => !m.missing);
   show(
     h("h1", {}, "Models"),
-    h("p", { class: "sub" }, summary.folders.length
-      ? `Scanning ${summary.folders.map((f) => f.path).join(", ")}`
-      : "No folders yet. Add the synced SharePoint folder with: daxlin workspace add-folder \"PATH\""),
+    foldersPanel(summary),
     h("div", { class: "tiles" },
       tile(summary.models, "models and reports"),
       tile(summary.measures, "measures"),

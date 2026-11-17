@@ -339,7 +339,12 @@ class Store:
 
     def folders(self) -> list:
         with self.connect() as con:
-            return _rows(con.execute("SELECT * FROM folder ORDER BY path"))
+            rows = _rows(con.execute(
+                "SELECT f.*, (SELECT COUNT(*) FROM model m WHERE m.folder_id = f.id AND m.missing = 0) AS models "
+                "FROM folder f ORDER BY f.path"))
+        for r in rows:
+            r["exists"] = Path(r["path"]).is_dir()
+        return rows
 
     # -- scanning ---------------------------------------------------------
 

@@ -55,15 +55,33 @@ folder, and it reads every model each night into a database on your own machine.
 find a measure across all models, see which visuals use it, and leave notes, owners and keep/remove
 decisions that stay attached to the measure through renames and new versions.
 
-```bash
-daxlin workspace add-folder "C:/Users/me/Contoso/BI - Reports"   # the synced SharePoint library
-daxlin workspace scan                                            # reads every changed .pbix / .pbit
-daxlin workspace serve                                           # http://127.0.0.1:8766
+#### Quick start on your PC (Windows, 2 minutes)
+
+1. Install [Python 3.9 or later](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. Download this repository (**Code → Download ZIP**) and unzip it.
+3. **Double-click `run-workspace.bat`.** A black window opens (leave it open: it is the workspace)
+   and your browser shows http://127.0.0.1:8766.
+4. On the page, under **Start here**, click **Browse…** and choose the folder that holds your `.pbix`
+   files, for example the SharePoint library OneDrive syncs to your PC. Or paste its path (in File
+   Explorer, click the address bar and copy it). Click **Add and scan**.
+5. The models appear. Click **Scan now** after you save new versions; to stop, close the black window.
+
+Subfolders are read too, and files are only read, never changed. Everything stays on your PC, in
+`pbi-workspace.db` next to `run-workspace.bat`.
+
+**Nothing found?** The scan reads `.pbix` and `.pbit` files (not `.pbip` folders yet). Files that
+OneDrive keeps only online are downloaded as they are read: if one fails, right-click the folder in
+File Explorer → **Always keep on this device**, then **Scan now** again.
+
+The same from a terminal, for scheduled scans or scripts (`./run-workspace.sh` on macOS and Linux):
+
+```bat
+run-workspace.bat add-folder "C:\Users\me\OneDrive - Contoso\BI - Reports"
+run-workspace.bat scan
+run-workspace.bat                 &REM no arguments: open the page
 ```
 
-Without installing, from the repository folder: `run-workspace.bat add-folder "PATH"`, then
-`run-workspace.bat scan`, then double-click `run-workspace.bat` to open it (`./run-workspace.sh` on macOS
-and Linux). The database is `pbi-workspace.db` next to it.
+Editing `run-workspace.bat` itself does nothing for the folder: its `rem` lines are comments.
 
 ![The workspace: four models, their unused measures and owners](docs/assets/workspace-models.png)
 

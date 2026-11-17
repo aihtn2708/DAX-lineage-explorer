@@ -29,6 +29,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
@@ -111,7 +112,7 @@ COOKIE = "pbiw_session"
 
 def required_role(path: str, body: dict) -> str:
     """The least role that may make this POST."""
-    if path == "/api/scan" or path.startswith("/api/admin/"):
+    if path == "/api/scan" or path.startswith("/api/admin/") or path.startswith("/api/folders"):
         return "admin"
     if path.startswith("/api/account/"):
         return "viewer"
@@ -128,6 +129,31 @@ def action_name(path: str) -> tuple:
     target = ",".join(p for p in parts if p.isdigit())
     words = [p for p in parts if not p.isdigit()]
     return ".".join(words) or "request", target
+
+
+PICKER = r"""
+import sys, tkinter
+from tkinter import filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+path = filedialog.askdirectory(title="Choose the folder with your Power BI files", mustexist=True)
+root.destroy()
+sys.stdout.write(path or "")
+"""
+
+
+def pick_folder() -> str:
+    """Open the system's folder dialog on this computer; '' if cancelled."""
+    import subprocess
+    try:
+        done = subprocess.run([sys.executable, "-c", PICKER], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError("the folder picker did not open: paste the path instead") from None
+    if done.returncode != 0:
+        raise ValueError("the folder picker could not open here (Python's tkinter is missing): paste the path instead")
+    path = done.stdout.strip()
+    return str(Path(path)) if path else ""
 
 
 class ApiError(Exception):
@@ -290,6 +316,11 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 action, target = action_name(path)
                 A.audit(store, self.who, action, target, body, self.client_address[0])
 
+        def _can_browse(self) -> bool:
+            """A folder dialog opens on this computer's screen: only for someone sitting at it."""
+            return (auth.mode == "none" and self.client_address[0] in ("127.0.0.1", "::1")
+                    and self.server.server_address[0] in ("127.0.0.1", "::1", "localhost"))
+
         def _refuse_own_approval(self, path: str, body: dict) -> str:
             """Someone else approves a change, and only its author or a reviewer cancels it."""
             match = re.fullmatch(r"/api/changes/(\d+)/decision", path)
@@ -369,6 +400,8 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return HTTPStatus.OK, store.decisions(one("decision", "remove"))
             if path == "/api/scan":
                 return HTTPStatus.OK, job.state()
+            if path == "/api/folders":
+                return HTTPStatus.OK, {"folders": store.folders(), "can_browse": self._can_browse()}
             if path == "/api/reviews":
                 status = one("status", "pending")
                 if status not in REVIEW_STATES + ("all",):
@@ -490,6 +523,26 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "results must be a list")
                 return HTTPStatus.OK, change_requests.applied(store, request_id, results, str(body.get("by", "")),
                                                               str(body.get("machine", "")))
+            if path == "/api/folders":
+                folder = str(self._body().get("path", "")).strip().strip('"')
+                if not folder:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "paste the folder's path first")
+                if not Path(folder).expanduser().is_dir():
+                    raise ApiError(HTTPStatus.BAD_REQUEST, f"no folder at {folder}: copy the path from File Explorer's "
+                                                           "address bar")
+                store.add_folder(folder)
+                started = job.start() if self._body().get("scan") else False
+                return HTTPStatus.OK, {"folders": store.folders(), "scanning": started}
+            if path == "/api/folders/remove":
+                if not store.remove_folder(str(self._body().get("path", ""))):
+                    raise ApiError(HTTPStatus.NOT_FOUND, "that folder is not registered")
+                return HTTPStatus.OK, {"folders": store.folders()}
+            if path == "/api/folders/browse":
+                self._body()
+                if not self._can_browse():
+                    raise ApiError(HTTPStatus.FORBIDDEN, "the folder picker opens on the computer running the workspace, "
+                                                         "so it works only there: paste the path instead")
+                return HTTPStatus.OK, {"path": pick_folder()}
             if path == "/api/rules/reset":
                 self._body()
                 standards_check.reset_rules(store)
