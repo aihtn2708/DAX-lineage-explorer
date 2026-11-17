@@ -31,8 +31,9 @@ from importlib import resources
 from urllib.parse import parse_qs, urlsplit
 
 from ..serve import LOOPBACK
+from .diff import compare
 from .scan import scan_folders
-from .store import Store
+from .store import REVIEW_STATES, Store
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; "
        "font-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; "
@@ -91,8 +92,8 @@ class ApiError(Exception):
         self.status = status
 
 
-def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool):
-    job = ScanJob(store)
+def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool, job=None):
+    job = job or ScanJob(store)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "daxlin-workspace"
@@ -172,8 +173,12 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool)
                 status, payload = call()
             except ApiError as err:
                 status, payload = err.status, {"error": str(err)}
-            except (KeyError, ValueError) as err:
-                status, payload = HTTPStatus.BAD_REQUEST, {"error": str(err).strip("'")}
+            except KeyError as err:
+                message = str(err).strip("'\"")
+                status = HTTPStatus.NOT_FOUND if message.startswith("no such") else HTTPStatus.BAD_REQUEST
+                payload = {"error": message}
+            except ValueError as err:
+                status, payload = HTTPStatus.BAD_REQUEST, {"error": str(err)}
             self._json(status, payload)
 
         # -- routes -------------------------------------------------------
@@ -191,6 +196,23 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool)
                 return HTTPStatus.OK, store.decisions(one("decision", "remove"))
             if path == "/api/scan":
                 return HTTPStatus.OK, job.state()
+            if path == "/api/reviews":
+                status = one("status", "pending")
+                if status not in REVIEW_STATES + ("all",):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "unknown review status")
+                rows = store.reviews(status)
+                for row in rows:
+                    row["changes"] = compare(store, row["id"])["counts"]
+                return HTTPStatus.OK, rows
+            match = re.fullmatch(r"/api/versions/(\d+)", path)
+            if match:
+                against = one("against")
+                if against and not against.isdigit():
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "against must be a version id")
+                review = compare(store, int(match.group(1)), int(against) if against else None)
+                review["comments"] = store.comments(int(match.group(1)))
+                review["versions"] = store.versions_of(review["version"]["model_id"])
+                return HTTPStatus.OK, review
             match = re.fullmatch(r"/api/(models|objects)/(\d+)", path)
             if match:
                 found = (store.model if match.group(1) == "models" else store.object)(int(match.group(2)))
@@ -210,6 +232,14 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool)
                                        str(body.get("note", "")), str(body.get("decision", "")),
                                        str(body.get("by", "")))
                 return HTTPStatus.OK, saved
+            match = re.fullmatch(r"/api/versions/(\d+)/(comments|review)", path)
+            if match:
+                body, version_id = self._body(), int(match.group(1))
+                if match.group(2) == "comments":
+                    return HTTPStatus.OK, store.add_comment(version_id, str(body.get("body", "")), str(body.get("by", "")),
+                                                            str(body.get("object_key", "")))
+                return HTTPStatus.OK, store.set_review(version_id, str(body.get("status", "")), str(body.get("by", "")),
+                                                       str(body.get("note", "")))
             match = re.fullmatch(r"/api/models/(\d+)", path)
             if match:
                 body = self._body()
@@ -226,21 +256,22 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool)
 
 
 def make_server(store: Store, host: str = "127.0.0.1", port: int = 8766, quiet: bool = False, allow_hosts=(),
-                read_only: bool = False) -> ThreadingHTTPServer:
+                read_only: bool = False, job=None) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), None)
     bound = server.server_address[1]
     names = {f"{h}:{bound}" for h in LOOPBACK} | {f"{host}:{bound}".lower()}
     for extra in allow_hosts:
         extra = extra.strip().lower()
         names |= {extra} if ":" in extra else {extra, f"{extra}:{bound}", f"{extra}:80", f"{extra}:443"}
-    server.RequestHandlerClass = make_handler(store, names, read_only, quiet)
+    server.RequestHandlerClass = make_handler(store, names, read_only, quiet, job)
     return server
 
 
 def serve(store: Store, host: str = "127.0.0.1", port: int = 8766, open_browser: bool = True, quiet: bool = False,
-          allow_hosts=(), read_only: bool = False) -> int:
+          allow_hosts=(), read_only: bool = False, scan_every: int = 0) -> int:
+    job = ScanJob(store)
     try:
-        server = make_server(store, host, port, quiet, allow_hosts, read_only)
+        server = make_server(store, host, port, quiet, allow_hosts, read_only, job)
     except OSError as err:
         print(f"Cannot listen on {host}:{port} ({err.strerror or err}). Another program may be using that port: "
               f"try --port {port + 1}.", file=sys.stderr)
@@ -251,6 +282,15 @@ def serve(store: Store, host: str = "127.0.0.1", port: int = 8766, open_browser:
         print(f"  warning: listening on {host}. There are no sign-ins yet, so anyone who can reach this address\n"
               f"  can read the catalogue{'' if read_only else ' and add notes'}. Put it behind a proxy that signs "
               f"people in, or use --read-only.", file=sys.stderr)
+    if scan_every:
+        stop = threading.Event()
+
+        def every():
+            while not stop.wait(scan_every * 60):
+                job.start()
+
+        threading.Thread(target=every, daemon=True).start()
+        print(f"  scanning the registered folders every {scan_every} minutes", file=sys.stderr)
     print("  Ctrl+C to stop.", file=sys.stderr)
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
