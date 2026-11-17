@@ -66,6 +66,13 @@ Either way the page needs no server and no network. It has:
 
 - a layered graph, dependencies on the left, dependents on the right, one layer
   per step of the longest chain;
+- a sidebar laid out like Power BI's field list: each table, then its display
+  folders (nested `Folder\Subfolder` too), then its measures and columns —
+  collapsible, and it opens to whatever you click in the graph;
+- the **chain depth** beside each measure: how many steps the longest path from
+  it down to the model's source columns takes. `1` reads columns directly, like
+  `SUM(Sales[Amount])`; `3` is built on a measure built on a measure. High numbers
+  are where a change ripples furthest and where a wrong number is hardest to trace;
 - click-to-trace: the upstream chain in blue, the downstream chain in orange,
   everything unrelated dimmed, or hidden with **Focus**;
 - a detail panel with the DAX, syntax highlighted, whose references are

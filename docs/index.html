@@ -98,8 +98,8 @@
       <input type="search" id="search" placeholder="Search measures and columns  ( / )" autocomplete="off">
       <select id="tableFilter"><option value="">All tables</option></select>
       <select id="sort">
+        <option value="model">Group by table, then folder</option>
         <option value="folder">Group by display folder</option>
-        <option value="table">Group by table</option>
         <option value="depth">Sort by chain depth</option>
         <option value="used">Sort by times referenced</option>
         <option value="name">Sort by name</option>
@@ -132,6 +132,7 @@
       <span><i style="background:var(--table)"></i>Table</span>
       <span><i style="background:var(--measure);opacity:.45"></i>Reads (upstream)</span>
       <span><i style="background:var(--column);opacity:.45"></i>Read by (downstream)</span>
+      <span><b class="depth">3</b> chain depth</span>
     </div>
   </div>
 

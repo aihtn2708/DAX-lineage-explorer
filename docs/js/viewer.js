@@ -40,7 +40,8 @@ const state = {
   hover: null,
   query: "",
   table: "",
-  sort: "folder",
+  sort: "model",
+  collapsed: new Set(),
   showColumns: true,
   showTables: false,
   showHidden: true,
@@ -107,22 +108,107 @@ function listNodes() {
   });
 }
 
+function depthMeta(n) {
+  if (!n.depth) return "";
+  const what = n.kind === "measure" ? "measure" : "column";
+  const tip = `Chain depth ${n.depth}: the longest path from this ${what} down to the model's source columns is ${n.depth} step${n.depth === 1 ? "" : "s"}.` +
+    (n.depth === 1 ? " It reads columns directly." : ` It is built on other ${n.kind === "measure" ? "measures" : "calculations"}.`);
+  return `<span class="depth" title="${esc(tip)}">${n.depth}</span>`;
+}
+
+function itemRow(n, indent) {
+  const used = (IN.get(n.id) || []).length;
+  const meta = state.sort === "used"
+    ? `<span class="depth" title="Read by ${used} other object${used === 1 ? "" : "s"}">${used}&times;</span>`
+    : depthMeta(n);
+  // inside a table group the table name is already the heading
+  const label = indent && n.kind === "column" ? n.name : n.label;
+  return `<button class="item${state.selected === n.id ? " sel" : ""}" data-id="${esc(n.id)}"
+      title="${esc(n.label)}${n.description ? " — " + esc(n.description) : ""}" style="padding-left:${14 + indent * 14}px">
+    <span class="dot" style="background:${KIND_COLOR[n.kind]}${n.exists ? "" : ";opacity:.4"}"></span>
+    <span class="nm">${esc(label)}</span>
+    ${n.isHidden ? `<span class="tag" title="Hidden in the model">hidden</span>` : ""}
+    ${meta}
+  </button>`;
+}
+
+const byKindThenName = (a, b) =>
+  (a.kind === b.kind ? 0 : a.kind === "measure" ? -1 : b.kind === "measure" ? 1 : 0) ||
+  a.name.localeCompare(b.name);
+
+// Power BI's field list: Table > Display folder (nested with \) > measures, then columns
+function renderModelTree(nodes) {
+  const searching = !!state.query;
+  const tables = new Map();
+  const tableOf = n => n.kind === "table" ? n.name : (n.table || (n.exists ? "(no table)" : "(not in the export)"));
+  for (const n of nodes) {
+    const t = tableOf(n);
+    if (!tables.has(t)) tables.set(t, { folders: new Map(), items: [], measures: 0, columns: 0 });
+    const group = tables.get(t);
+    if (n.kind === "measure") group.measures++;
+    if (n.kind === "column") group.columns++;
+    if (n.kind === "table") continue;
+    const paths = (n.displayFolder || "").split(";").map(p => p.trim()).filter(Boolean);
+    if (!paths.length) { group.items.push(n); continue; }
+    for (const path of paths) {
+      let level = group;
+      for (const part of path.split("\\").map(p => p.trim()).filter(Boolean)) {
+        if (!level.folders.has(part)) level.folders.set(part, { folders: new Map(), items: [] });
+        level = level.folders.get(part);
+      }
+      level.items.push(n);
+    }
+  }
+  const html = [];
+  // top: the table itself, whose loose items the caller lists after its folders
+  const folderHtml = (folder, key, depth, top) => {
+    for (const [name, sub] of [...folder.folders.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const subKey = `${key}\\${name}`;
+      const open = searching || !state.collapsed.has(subKey);
+      html.push(`<button class="fgroup" data-key="${esc(subKey)}" style="padding-left:${14 + depth * 14}px" aria-expanded="${open}">
+        <span class="caret">${open ? "▾" : "▸"}</span><span class="folder-icon" aria-hidden="true"></span>${esc(name)}</button>`);
+      if (open) folderHtml(sub, subKey, depth + 1, false);
+    }
+    if (!top) for (const n of folder.items.sort(byKindThenName)) html.push(itemRow(n, depth));
+  };
+  const order = [...tables.keys()].sort((a, b) =>
+    (a.startsWith("(") - b.startsWith("(")) ||
+    (tables.get(b).measures > 0) - (tables.get(a).measures > 0) || a.localeCompare(b));
+  for (const t of order) {
+    const g = tables.get(t);
+    const key = `t\\${t}`;
+    const open = searching || !state.collapsed.has(key);
+    const counts = [g.measures && `${g.measures} measure${g.measures === 1 ? "" : "s"}`,
+                    g.columns && `${g.columns} column${g.columns === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+    html.push(`<button class="tgroup" data-key="${esc(key)}" aria-expanded="${open}">
+      <span class="caret">${open ? "▾" : "▸"}</span><span class="table-icon" aria-hidden="true"></span>
+      <span class="nm">${esc(t)}</span><span class="count">${counts}</span></button>`);
+    if (!open) continue;
+    folderHtml(g, key, 1, true);
+    for (const n of g.items.sort(byKindThenName)) html.push(itemRow(n, 1));
+  }
+  return html.join("");
+}
+
 function renderList() {
   const nodes = listNodes();
-  const byMeasureFirst = (a, b) =>
-    (a.kind === b.kind ? 0 : a.kind === "measure" ? -1 : b.kind === "measure" ? 1 : 0);
-  let groups;
-  if (state.sort === "folder" || state.sort === "table") {
-    const key = n => state.sort === "folder"
-      ? (n.kind === "measure" ? (n.displayFolder || "No display folder") : (n.table || n.kind))
-      : (n.table || n.name);
+  let body;
+  if (state.sort === "model") {
+    body = renderModelTree(nodes);
+  } else if (state.sort === "folder") {
+    // measures by display folder; columns by table, labelled so a folder and a
+    // table that share a name never merge into one group
     const map = new Map();
     for (const n of nodes) {
-      if (!map.has(key(n))) map.set(key(n), []);
-      map.get(key(n)).push(n);
+      const key = n.kind === "measure"
+        ? `0${n.displayFolder || "No display folder"}`
+        : `1Columns of ${n.table || n.name}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(n);
     }
-    groups = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([title, items]) => [title, items.sort((a, b) => byMeasureFirst(a, b) || a.name.localeCompare(b.name))]);
+    body = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, items]) =>
+      `<div class="group">${key[0] === "0" ? '<span class="folder-icon" aria-hidden="true"></span>' : ""}${esc(key.slice(1).replace(/\\/g, " \u203A "))}</div>` +
+      items.sort(byKindThenName).map(n => itemRow(n, 0)).join("")).join("");
   } else {
     const score = {
       depth: n => -n.depth,
@@ -133,20 +219,10 @@ function renderList() {
       const x = score(a), y = score(b);
       return x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name);
     });
-    groups = [[`${nodes.length} object${nodes.length === 1 ? "" : "s"}`, sorted]];
+    body = `<div class="group">${nodes.length} object${nodes.length === 1 ? "" : "s"}</div>` +
+      sorted.map(n => itemRow(n, 0)).join("");
   }
-
-  $("list").innerHTML = groups.map(([title, items]) => `
-    <div class="group">${esc(title)}</div>
-    ${items.map(n => {
-      const used = (IN.get(n.id) || []).length;
-      const meta = state.sort === "used" ? `${used}&times;` : (n.depth ? `d${n.depth}` : "");
-      return `<button class="item${state.selected === n.id ? " sel" : ""}" data-id="${esc(n.id)}" title="${esc(n.label)}">
-        <span class="dot" style="background:${KIND_COLOR[n.kind]}${n.exists ? "" : ";opacity:.4"}"></span>
-        <span class="nm">${esc(n.label)}</span>
-        <span class="meta">${meta}</span>
-      </button>`;
-    }).join("")}`).join("") || `<div class="empty">Nothing matches that search.</div>`;
+  $("list").innerHTML = body || `<div class="empty">Nothing matches that search.</div>`;
 }
 
 /* ---------- graph layout ---------- */
@@ -503,8 +579,23 @@ function centreOn(id) {
   applyView();
 }
 
+function revealInList(id) {
+  const n = NODES.get(id);
+  if (!n) return;
+  const table = n.kind === "table" ? n.name : (n.table || (n.exists ? "(no table)" : "(not in the export)"));
+  state.collapsed.delete(`t\\${table}`);
+  for (const path of (n.displayFolder || "").split(";").map(p => p.trim()).filter(Boolean)) {
+    let key = `t\\${table}`;
+    for (const part of path.split("\\").map(p => p.trim()).filter(Boolean)) {
+      key += `\\${part}`;
+      state.collapsed.delete(key);
+    }
+  }
+}
+
 function select(id) {
   state.selected = id && NODES.has(id) ? id : null;
+  if (state.selected) revealInList(state.selected);
   render();
   if (state.selected) {
     centreOn(state.selected);
@@ -514,6 +605,13 @@ function select(id) {
 }
 
 $("list").addEventListener("click", event => {
+  const header = event.target.closest(".tgroup, .fgroup");
+  if (header) {
+    const key = header.dataset.key;
+    state.collapsed.has(key) ? state.collapsed.delete(key) : state.collapsed.add(key);
+    renderList();
+    return;
+  }
   const item = event.target.closest(".item");
   if (item) select(item.dataset.id);
 });

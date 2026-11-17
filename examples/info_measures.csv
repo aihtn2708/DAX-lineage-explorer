@@ -3,20 +3,20 @@ ID,TableID,Name,Description,Expression,FormatString,DisplayFolder,IsHidden,State
 1002,5,Total Quantity,Units shipped.,SUM ( Sales[Quantity] ),"#,0",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1002
 1003,5,Total Cost,Standard cost of units shipped.,SUM ( Sales[LineCost] ),"#,0.00",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1003
 1004,5,Order Count,Distinct orders.,DISTINCTCOUNT ( Sales[OrderNumber] ),"#,0",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1004
-1005,5,Customer Count,Customers with at least one line.,DISTINCTCOUNT ( Sales[CustomerKey] ),"#,0",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1005
+1005,4,Customer Count,Customers with at least one line.,DISTINCTCOUNT ( Sales[CustomerKey] ),"#,0",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1005
 1006,5,Gross Margin,,[Total Sales] - [Total Cost],"#,0.00",Profitability,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1006
 1007,5,Gross Margin %,Margin as a share of net sales. Certified figure used in the board pack.,"DIVIDE ( [Gross Margin], [Total Sales] )",0.0%,Profitability,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1007
 1008,5,Average Order Value,,"DIVIDE ( [Total Sales], [Order Count] )","#,0.00",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1008
 1009,5,Average Unit Price,,"DIVIDE ( [Total Sales], [Total Quantity] )","#,0.00",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1009
-1010,5,Sales per Customer,,"DIVIDE ( [Total Sales], [Customer Count] )","#,0.00",Customer,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1010
+1010,4,Sales per Customer,,"DIVIDE ( [Total Sales], [Customer Count] )","#,0.00",Customer,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1010
 1011,5,Units per Order,,"DIVIDE ( [Total Quantity], [Order Count] )","#,0.0",Core,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1011
 1012,5,Sales PY,Same period last year.,"CALCULATE (
     [Total Sales],
     SAMEPERIODLASTYEAR ( 'Date'[Date] )
 )","#,0.00",Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1012
-1013,5,Sales YTD,,"TOTALYTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1013
-1014,5,Sales MTD,,"TOTALMTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1014
-1015,5,Sales QTD,,"TOTALQTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1015
+1013,5,Sales YTD,,"TOTALYTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence\Period to date,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1013
+1014,5,Sales MTD,,"TOTALMTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence\Period to date,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1014
+1015,5,Sales QTD,,"TOTALQTD ( [Total Sales], 'Date'[Date] )","#,0.00",Time intelligence\Period to date,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1015
 1016,5,Sales YoY,,[Total Sales] - [Sales PY],"#,0.00",Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1016
 1017,5,Sales YoY %,Growth against the same period last year.,"DIVIDE ( [Sales YoY], [Sales PY] )",0.0%,Time intelligence,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1017
 1018,5,Sales Rolling 3M,,"CALCULATE (
@@ -37,8 +37,8 @@ RETURN
     [Total Sales],
     REMOVEFILTERS ( Customer[Segment] )
 )",,,True,Ready,,Decimal,2026-11-14T09:12:03,lt-1022
-1023,5,Segment Share of Sales,,"DIVIDE ( [Total Sales], [_Base Sales Helper] )",0.0%,Customer,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1023
-1024,5,Top Product Sales,,"MAXX (
+1023,4,Segment Share of Sales,,"DIVIDE ( [Total Sales], [_Base Sales Helper] )",0.0%,Customer,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1023
+1024,3,Top Product Sales,,"MAXX (
     VALUES ( Product[ProductName] ),
     [Total Sales]
 )","#,0.00",Product,False,Ready,,Decimal,2026-11-14T09:12:03,lt-1024
