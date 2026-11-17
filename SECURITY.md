@@ -105,6 +105,21 @@ What protects it:
 - There are **no sign-ins yet**. On a shared server, put it behind a proxy that
   signs people in, or use `--read-only`.
 
+The Desktop companion (`daxlin workspace companion`) is the only part that
+changes a model, and only the one open in Power BI Desktop on that PC:
+
+- it makes only edits from a change that someone approved in the workspace,
+  each checked against the model's latest version when it was proposed;
+- it shows every edit and changes nothing until the user types `APPLY`;
+- it skips an edit whose object no longer has the value the change expects;
+- it saves the model's definition to `%LOCALAPPDATA%\PowerBIWorkspace\backups`
+  first, and if Desktop refuses any edit it undoes them all;
+- nothing is saved to the .pbix until the user saves it in Desktop.
+
+It calls the workspace's API without a browser, so a server reachable from
+other PCs accepts those calls from anyone who can reach it: another reason to
+keep the server on 127.0.0.1 or behind a proxy that signs people in.
+
 ## Reporting a vulnerability
 
 Please report it privately through GitHub: the repository's **Security** tab,

@@ -31,6 +31,7 @@ from importlib import resources
 from urllib.parse import parse_qs, urlsplit
 
 from ..serve import LOOPBACK
+from . import changes as change_requests
 from . import check as standards_check
 from .diff import compare
 from .scan import scan_folders
@@ -174,6 +175,8 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 status, payload = call()
             except ApiError as err:
                 status, payload = err.status, {"error": str(err)}
+            except change_requests.Blocked as err:
+                status, payload = HTTPStatus.BAD_REQUEST, {"error": str(err), "problems": err.problems}
             except KeyError as err:
                 message = str(err).strip("'\"")
                 status = HTTPStatus.NOT_FOUND if message.startswith("no such") else HTTPStatus.BAD_REQUEST
@@ -209,6 +212,18 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return HTTPStatus.OK, standards_check.standards(store)
             if path == "/api/standards/owner":
                 return HTTPStatus.OK, standards_check.owner_findings(store, one("name"))
+            if path == "/api/changes/ready":
+                return HTTPStatus.OK, {"changes": change_requests.ready(store)}
+            if path == "/api/changes":
+                model = one("model")
+                return HTTPStatus.OK, change_requests.requests(store, one("status", "open"),
+                                                               int(model) if model.isdigit() else None)
+            match = re.fullmatch(r"/api/changes/(\d+)", path)
+            if match:
+                found = change_requests.get(store, int(match.group(1)))
+                if found is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                return HTTPStatus.OK, found
             if path == "/api/rules/export":
                 return HTTPStatus.OK, standards_check.export_rules(store)
             match = re.fullmatch(r"/api/versions/(\d+)", path)
@@ -248,6 +263,31 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                                        str(body.get("note", "")), str(body.get("decision", "")),
                                        str(body.get("by", "")))
                 return HTTPStatus.OK, saved
+            if path in ("/api/changes", "/api/changes/preview"):
+                body = self._body()
+                items = body.get("items")
+                if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "items must be a list of edits")
+                if path.endswith("preview"):
+                    planned = change_requests.plan(store, int(body["model_id"]), items)
+                    planned.pop("model", None)
+                    return HTTPStatus.OK, planned
+                return HTTPStatus.OK, change_requests.create(store, int(body["model_id"]), str(body.get("title", "")),
+                                                             items, str(body.get("by", "")))
+            match = re.fullmatch(r"/api/changes/(\d+)/(decision|comments|applied)", path)
+            if match:
+                body, request_id = self._body(), int(match.group(1))
+                if match.group(2) == "decision":
+                    return HTTPStatus.OK, change_requests.decide(store, request_id, str(body.get("status", "")),
+                                                                 str(body.get("by", "")), str(body.get("note", "")))
+                if match.group(2) == "comments":
+                    return HTTPStatus.OK, change_requests.comment(store, request_id, str(body.get("body", "")),
+                                                                  str(body.get("by", "")))
+                results = body.get("results")
+                if not isinstance(results, list):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "results must be a list")
+                return HTTPStatus.OK, change_requests.applied(store, request_id, results, str(body.get("by", "")),
+                                                              str(body.get("machine", "")))
             if path == "/api/rules/reset":
                 self._body()
                 standards_check.reset_rules(store)

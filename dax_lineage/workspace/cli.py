@@ -8,6 +8,8 @@
     daxlin workspace cleanup                 # what the team marked to remove
     daxlin workspace check                   # standards findings; exits 1 when there are errors
     daxlin workspace rules                   # the rule set: set, export, import, reset
+    daxlin workspace requests                # change requests waiting or approved
+    daxlin workspace companion               # the Power BI Desktop companion, to install on each PC
     daxlin workspace review                  # versions waiting for review
     daxlin workspace changes "Sales"         # what changed in its latest version
     daxlin workspace changes --since 1d      # everything saved since yesterday, as text
@@ -80,6 +82,10 @@ def main(argv=None) -> int:
     p.add_argument("--severity", choices=["error", "warning", "info"])
     p.add_argument("--param", action="append", default=[], metavar="NAME=VALUE", help="a rule setting, e.g. pattern=^[A-Z]")
     p.add_argument("-o", "--out", help="export: write to this file instead of the screen")
+    p = sub.add_parser("requests", help="change requests: open ones, or --all")
+    p.add_argument("--all", action="store_true")
+    p = sub.add_parser("companion", help="write the Power BI Desktop companion and its installer to a folder")
+    p.add_argument("--out", default="powerbi-workspace-companion", help="folder to write (default: powerbi-workspace-companion)")
     p = sub.add_parser("review", help="versions waiting for review (or --all)")
     p.add_argument("--all", action="store_true", help="every reviewable version, with its state")
     args = parser.parse_args(argv)
@@ -126,6 +132,13 @@ def main(argv=None) -> int:
         return _changes(store, args)
     elif args.command == "check":
         return _check(store, args)
+    elif args.command == "requests":
+        from .changes import requests
+        rows = [(f"#{r['id']}", r["model_name"], r["title"][:60], r["edits"], r["status"], r["created_by"], r["decided_by"])
+                for r in requests(store, "all" if args.all else "open")]
+        print(_table(rows, ["id", "model", "change", "edits", "status", "proposed by", "decided by"]) or "no open changes")
+    elif args.command == "companion":
+        return _companion(args.out)
     elif args.command == "rules":
         return _rules(store, args)
     elif args.command == "review":
@@ -215,6 +228,24 @@ def _rules(store: Store, args) -> int:
     elif args.action == "reset":
         reset_rules(store)
         print("every rule is back to its default")
+    return 0
+
+
+def _companion(out: str) -> int:
+    from importlib import resources
+    from pathlib import Path
+    target = Path(out)
+    target.mkdir(parents=True, exist_ok=True)
+    source = resources.files(__package__).joinpath("companion")
+    for name in ("PowerBIWorkspaceCompanion.ps1", "install-companion.ps1", "PowerBIWorkspace.pbitool.template.json"):
+        data = source.joinpath(name).read_bytes()
+        if name.endswith(".ps1"):  # Windows PowerShell 5.1 reads a script without a byte order mark as ANSI
+            data = b"\xef\xbb\xbf" + data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        (target / name).write_bytes(data)
+    print(f"wrote the companion to {target.resolve()}\n"
+          "On each Windows PC with Power BI Desktop, from that folder, in PowerShell as administrator:\n"
+          "  powershell -ExecutionPolicy Bypass -File .\\install-companion.ps1 -Workspace http://127.0.0.1:8766 -DownloadTom\n"
+          "then restart Power BI Desktop: 'Workspace changes' appears under External Tools.")
     return 0
 
 

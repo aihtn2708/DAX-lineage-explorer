@@ -208,6 +208,10 @@ def _scan_file(store: Store, path: Path, resolved: str, folder_id, force: bool, 
         checked = check_version(store, saved["version_id"])
         if checked:
             rows["counts"]["score"] = checked["score"]
+        from .changes import verify
+        confirmed = verify(store, saved["model_id"], saved["version_id"])
+    else:
+        confirmed = []
     if rows["status"] == "error":
         summary["failed"] += 1
         say(f"error   {path.name} v{saved['number']}: {rows['note']}")
@@ -218,3 +222,5 @@ def _scan_file(store: Store, path: Path, resolved: str, folder_id, force: bool, 
                 + (f", standards score {c['score']}" if "score" in c else ""))
         say(f"{'new' if not current else 'changed'}{' ' * (8 - len('new' if not current else 'changed'))}"
             f"{path.name} v{saved['number']}: {what}" + (f" ({rows['note']})" if rows["status"] != "ok" else ""))
+    for request_id in confirmed:
+        say(f"        change #{request_id} is confirmed: every edit is in the saved file")

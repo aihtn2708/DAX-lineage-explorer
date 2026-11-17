@@ -168,3 +168,22 @@ td select { padding: 3px 6px; font-size: 12px; }
 .finding:last-child { border-bottom: 0; }
 .finding .form { margin-top: 6px; }
 .nowrap { white-space: nowrap; }
+
+/* milestone 4: changes */
+.badge.proposed::before { background: var(--warning); }
+.badge.applied::before { background: var(--accent); }
+.badge.confirmed { border-color: var(--good); color: var(--good); }
+.badge.confirmed::before { background: var(--good); }
+.badge.rejected::before, .badge.cancelled::before { background: var(--axis); }
+.badge.failed::before, .badge.skipped::before { background: var(--critical); }
+.badge.manual::before { background: var(--warning); }
+.badge.already::before { background: var(--axis); }
+.notice { border: 1px solid var(--border); border-left: 3px solid var(--warning); background: var(--surface-1); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.notice.bad { border-left-color: var(--critical); }
+.notice.good { border-left-color: var(--good); }
+.notice ul { margin: 4px 0 0; padding-left: 18px; }
+.edit-grid input, .edit-grid select { width: 100%; padding: 4px 6px; font-size: 13px; }
+.edit-grid td { padding: 4px 6px; vertical-align: middle; }
+.edit-grid input.changed, .edit-grid select.changed { border-color: var(--accent); background: rgba(42, 120, 214, .07); }
+.steps { margin: 6px 0 0; padding-left: 20px; }
+.steps li { margin: 3px 0; }
