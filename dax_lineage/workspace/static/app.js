@@ -301,6 +301,7 @@ async function modelView(id, params) {
           findingsTable(m.check.findings, false)]
           : h("p", { class: "muted" }, "Not checked: no model was read from this file.")),
       h("div", {},
+        m.version_id ? h("div", { class: "bar" }, h("a", { class: "graph-link", href: `/explorer/version/${m.version_id}` }, "Open the lineage graph")) : null,
         m.kind === "model" && m.status === "ok" ? h("div", { class: "bar" }, h("a", { href: `#/model/${m.id}/edit` }, "Describe and organise measures…"),
           " · ", h("a", { href: `#/changes?status=all` }, "changes")) : null,
         h("h2", {}, "About this model"),
@@ -358,6 +359,7 @@ async function objectView(id) {
   show(
     h("div", { class: "crumbs" }, h("a", { href: "#/" }, "Models"), " › ", h("a", { href: `#/model/${o.model_id}` }, o.model_name), " › ", fieldLabel(o)),
     h("h1", {}, fieldLabel(o)),
+    h("div", { class: "bar" }, h("a", { class: "graph-link", href: `/explorer/version/${o.version_id}?focus=${encodeURIComponent(o.node)}` }, "Show it in the lineage graph")),
     h("p", { class: "sub" }, kindTag(o.kind), o.kind !== "table" && o.table_name ? `  in ${o.table_name}` : "",
       o.display_folder ? `  ·  folder ${o.display_folder}` : "", o.is_hidden ? "  ·  hidden" : "",
       o.is_current ? "" : `  ·  version ${o.version}, not the current one`),
@@ -597,6 +599,8 @@ async function versionView(id, params) {
     h("div", { class: "crumbs" }, h("a", { href: "#/review" }, "Review"), " › ", h("a", { href: `#/model/${v.model_id}` }, v.model_name), " › ", `v${v.number}`),
     h("h1", {}, `${v.model_name} v${v.number} `, reviewBadge(v.review)),
     h("p", { class: "sub" }, `Saved ${fmtDate(v.file_modified_at)}`, r.against ? ["  ·  compared with ", compareSelect] : null),
+    !r.baseline && v.status !== "error" ? h("div", { class: "bar" }, h("a", { class: "graph-link",
+      href: `/explorer/version/${v.id}${against ? `?against=${encodeURIComponent(against)}` : ""}` }, "See the changes in the lineage graph")) : null,
     h("div", { class: "grid2" },
       h("div", {}, left),
       h("div", {},
@@ -900,6 +904,7 @@ async function changeView(id) {
     h("p", { class: "sub" }, h("a", { href: `#/model/${r.model_id}` }, r.model_name), `  ·  against v${r.base_number}`,
       r.current_number && r.current_number !== r.base_number ? `, the latest is v${r.current_number}` : "",
       r.confirmed_number ? `  ·  confirmed in v${r.confirmed_number}` : ""),
+    h("div", { class: "bar" }, h("a", { class: "graph-link", href: `/explorer/version/${r.base_version_id}?change=${r.id}` }, "See what it touches in the lineage graph")),
     h("div", { class: "grid2" },
       h("div", {},
         r.stale.length ? h("div", { class: "notice bad" }, h("b", {}, "The model changed since this was proposed"),

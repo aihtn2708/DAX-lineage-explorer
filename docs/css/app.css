@@ -136,6 +136,8 @@
   }
   .badge.warn { border-color: var(--warning); color: var(--text-primary); }
   .badge.crit { border-color: var(--critical); color: var(--critical); }
+  .badge.mark { border-width: 2px; font-weight: 600; }
+  .back-link { font-size: 13px; white-space: nowrap; }
   .detail h2 { margin: 0 0 2px; font-size: 16px; font-weight: 640; }
   .detail .sub { color: var(--text-secondary); font-size: 12.5px; margin-bottom: 10px; }
   .detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;

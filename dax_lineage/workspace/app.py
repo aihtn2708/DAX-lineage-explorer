@@ -174,9 +174,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
 
         # -- plumbing -----------------------------------------------------
 
-        def _send(self, status: int, body: bytes, content_type: str, extra=()):
+        def _send(self, status: int, body: bytes, content_type: str, extra=(), policy=None):
             self.send_response(status)
-            for name, value in HEADERS.items():
+            for name, value in dict(HEADERS, **(policy or {})).items():
                 self.send_header(name, value)
             for name, value in extra:
                 self.send_header(name, value)
@@ -270,6 +270,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if parts.path in STATIC:
                 name, content_type = STATIC[parts.path]
                 return self._send(HTTPStatus.OK, _static(name), content_type)
+            match = re.fullmatch(r"/explorer/version/(\d+)", parts.path)
+            if match:
+                return self._explorer(int(match.group(1)), parse_qs(parts.query))
             if not parts.path.startswith("/api/"):
                 return self._send(HTTPStatus.NOT_FOUND, b"not found\n", "text/plain; charset=utf-8")
             self.who, self.signed = self._identify()
@@ -315,6 +318,28 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if status < 400 and not path.endswith("/preview"):  # a preview changes nothing
                 action, target = action_name(path)
                 A.audit(store, self.who, action, target, body, self.client_address[0])
+
+        def _explorer(self, version_id: int, query: dict):
+            """The lineage explorer opened on a stored version, with what a review or change marks."""
+            from . import lineage
+            self.who, self.signed = self._identify()
+            if self.who is None:
+                return self._send(HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8", [("Location", "/#/signin")])
+            one = lambda name: (query.get(name) or [""])[0]
+            change = None
+            if one("change").isdigit():
+                change = change_requests.get(store, int(one("change")))
+                if change is None:
+                    return self._send(HTTPStatus.NOT_FOUND, b"no such change\n", "text/plain; charset=utf-8")
+                version_id = change["base_version_id"]
+            against = int(one("against")) if one("against").isdigit() else None
+            try:
+                page = lineage.page_for(store, version_id, one("focus"), against, change)
+            except (KeyError, ValueError) as err:
+                return self._send(HTTPStatus.BAD_REQUEST, f"{err}\n".encode(), "text/plain; charset=utf-8")
+            if page is None:
+                return self._send(HTTPStatus.NOT_FOUND, b"no such version\n", "text/plain; charset=utf-8")
+            self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8", policy=lineage.page_headers())
 
         def _can_browse(self) -> bool:
             """A folder dialog opens on this computer's screen: only for someone sitting at it."""
@@ -430,6 +455,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             match = re.fullmatch(r"/api/changes/(\d+)", path)
             if match:
                 found = change_requests.get(store, int(match.group(1)))
+                if found is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                return HTTPStatus.OK, found
+            match = re.fullmatch(r"/api/versions/(\d+)/lineage", path)
+            if match:
+                from .lineage import graph_for_version
+                found = graph_for_version(store, int(match.group(1)))
                 if found is None:
                     raise ApiError(HTTPStatus.NOT_FOUND, "not found")
                 return HTTPStatus.OK, found

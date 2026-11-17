@@ -662,14 +662,15 @@ class Store:
         with self.connect() as con:
             objects = _rows(con.execute(
                 "SELECT node, object_key, kind, table_name, name, expression, description, display_folder, "
-                "format_string, data_type, is_hidden, state, error_message, depth, in_model, usage_status, usage, id "
-                "FROM object WHERE version_id = ?", (version_id,)))
+                "format_string, data_type, is_hidden, is_calculated, state, error_message, depth, in_model, usage_status, "
+                "usage, id FROM object WHERE version_id = ? ORDER BY id", (version_id,)))
             for o in objects:
                 o["usage"] = json.loads(o["usage"]) if o["usage"] else None
             return {
                 "objects": objects,
                 "dependencies": _rows(con.execute(
-                    "SELECT source, target, kind FROM dependency WHERE version_id = ?", (version_id,))),
+                    "SELECT source, target, kind, via_variable FROM dependency WHERE version_id = ? "
+                    "ORDER BY source, target, kind", (version_id,))),
                 "visuals": _rows(con.execute(
                     "SELECT node, report, page, page_order, visual_type, title FROM visual WHERE version_id = ?",
                     (version_id,))),

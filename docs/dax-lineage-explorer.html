@@ -147,6 +147,8 @@
   }
   .badge.warn { border-color: var(--warning); color: var(--text-primary); }
   .badge.crit { border-color: var(--critical); color: var(--critical); }
+  .badge.mark { border-width: 2px; font-weight: 600; }
+  .back-link { font-size: 13px; white-space: nowrap; }
   .detail h2 { margin: 0 0 2px; font-size: 16px; font-weight: 640; }
   .detail .sub { color: var(--text-secondary); font-size: 12.5px; margin-bottom: 10px; }
   .detail h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
@@ -2446,6 +2448,12 @@ function setData(data) {
 
 const KIND_COLOR = { measure: "var(--measure)", column: "var(--column)", table: "var(--table)", visual: "var(--visual)" };
 const NODE_W = 182, NODE_H = 30, GAP_X = 96, GAP_Y = 13;
+// marks a host (the team workspace) puts on nodes: what a review found changed, or what a change touches
+const MARK = {
+  added: ["var(--good)", "new"], edited: ["var(--warning)", "edited"], renamed: ["var(--measure)", "renamed"],
+  broken: ["var(--critical)", "broken"], touched: ["var(--warning)", "changing"], follows: ["var(--muted)", "follows"]
+};
+const hasMarks = () => !!(DATA && DATA.nodes.some(n => MARK[n.mark]));
 
 const state = {
   selected: null,
@@ -2464,6 +2472,7 @@ const state = {
   usageFilter: "unusedAll",
   usageKind: "measure",
   focusOnly: false,
+  markedOnly: false,
   view: { x: 40, y: 40, k: 1 },
   positions: new Map(),
   visible: new Set()
@@ -2716,6 +2725,16 @@ function visibleNodes() {
     }
     ids = ids.filter(id => keep.has(id));
   }
+  if (state.markedOnly && hasMarks()) {
+    // the marked nodes, what they read directly, and everything that depends on them
+    const keep = new Set();
+    for (const n of DATA.nodes) if (MARK[n.mark]) {
+      keep.add(n.id);
+      for (const id of OUT.get(n.id) || []) keep.add(id);
+      for (const id of downstreamOf(n.id)) keep.add(id);
+    }
+    ids = ids.filter(id => keep.has(id));
+  }
   if (state.focusOnly && state.selected) {
     const keep = new Set([state.selected, ...upstreamOf(state.selected), ...downstreamOf(state.selected)]);
     ids = ids.filter(id => keep.has(id));
@@ -2842,16 +2861,19 @@ function render() {
     const dim = related && !related.has(id);
     const isSel = id === selected;
     const dash = !n.exists ? ' stroke-dasharray="4 3"' : n.isHidden ? ' stroke-dasharray="2 2"' : "";
-    const stroke = !n.exists ? "var(--critical)" : n.state === "Error" ? "var(--critical)" : color;
+    const mark = MARK[n.mark];
+    const stroke = mark ? mark[0] : !n.exists ? "var(--critical)" : n.state === "Error" ? "var(--critical)" : color;
+    const width = mark ? 3 : isSel ? 2.4 : 1.5;
     nodeSvg.push(`<g class="node${dim ? " dim" : ""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">
       <title>${esc(n.label)}${n.description ? " — " + esc(n.description) : ""}</title>
       <rect width="${NODE_W}" height="${NODE_H}" rx="${radius}" ry="${radius}"
             fill="color-mix(in srgb, ${color} ${isSel ? 26 : 12}%, var(--surface-1))"
-            stroke="${stroke}"${dash} stroke-width="${isSel ? 2.4 : 1.5}"></rect>
-      <text x="11" y="${NODE_H / 2 + 4}" fill="var(--text-primary)">${esc(truncate(n.label, 27))}</text>
-      ${isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
+            stroke="${stroke}"${dash} stroke-width="${width}"></rect>
+      <text x="11" y="${NODE_H / 2 + 4}" fill="var(--text-primary)">${esc(truncate(n.label, mark ? 20 : 27))}</text>
+      ${mark ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end" font-weight="600"
+            fill="${mark[0]}" font-size="9.5">${mark[1]}</text>` : isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
             fill="var(--muted)" font-size="9.5">unused</text>` : ""}
-      ${n.depth && n.kind !== "visual" && !isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
+      ${!mark && n.depth && n.kind !== "visual" && !isUnused(n) ? `<text x="${NODE_W - 9}" y="${NODE_H / 2 + 4}" text-anchor="end"
             fill="var(--muted)" font-size="10">${n.depth}</text>` : ""}
     </g>`);
   }
@@ -3221,6 +3243,7 @@ function renderDetail() {
   const up = upstreamOf(n.id), down = downstreamOf(n.id);
 
   const badges = [];
+  if (MARK[n.mark]) badges.push(`<span class="badge mark" style="border-color:${MARK[n.mark][0]}">${MARK[n.mark][1]}</span>`);
   if (!n.exists) badges.push(`<span class="badge crit">${(IN.get(n.id) || []).some(id => NODES.get(id).kind === "visual") ? "not in the model" : "not in export"}</span>`);
   if (n.isHidden) badges.push(`<span class="badge">hidden</span>`);
   if (n.isCalculated) badges.push(`<span class="badge">calculated column</span>`);
@@ -3446,6 +3469,18 @@ function mount(data, meta) {
   $("search").value = "";
   $("focusOnly").checked = false;
   state.showVisuals = true; state.unusedOnly = false;
+  // a graph with marks opens on them, with a switch to see the whole model
+  state.markedOnly = hasMarks();
+  let markToggle = $("markedOnly");
+  if (!markToggle && hasMarks()) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<label class="toggle"><input type="checkbox" id="markedOnly"> Changes and what they affect</label>`;
+    $("focusOnly").closest(".row").after(row);
+    markToggle = $("markedOnly");
+    markToggle.addEventListener("change", e => { state.markedOnly = e.target.checked; state.needsFit = true; render(); requestAnimationFrame(fit); });
+  }
+  if (markToggle) { markToggle.checked = state.markedOnly; markToggle.closest(".row").hidden = !hasMarks(); }
   $("showVisuals").checked = true; $("unusedOnly").checked = false;
   $("reportToggles").hidden = !hasReport();
   const usageOption = $("sort").querySelector('option[value="usage"]');

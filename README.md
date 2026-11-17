@@ -101,6 +101,22 @@ matched across versions by their Power BI **LineageTag**, which survives renames
 `Total Sales` is still there after it becomes `Net Sales`. A file that fails to read is recorded with
 the reason and does not stop the scan; a file that disappears is kept, marked *file not found*.
 
+### The lineage graph, inside the workspace
+
+Every model, measure, review and change opens in the lineage explorer, drawn from what the scan
+stored (the .pbix is not read again), for any version:
+
+- **A model or a measure**: *Open the lineage graph* / *Show it in the lineage graph*, centred on it.
+- **A review**: *See the changes in the lineage graph* marks what the save changed: new, edited,
+  renamed, broken, and DAX that only follows a rename. The graph opens on those and everything
+  they affect; untick *Changes and what they affect* for the whole model.
+- **A change request**: *See what it touches* marks the objects it will change and the DAX that
+  follows them.
+
+![A review in the lineage graph: a rename, an edit, a new measure and a broken reference](docs/assets/workspace-lineage-review.png)
+
+The page is the same offline explorer: it makes no request at all, not even to the workspace.
+
 ### Reviewing each other's changes
 
 Every saved version after the first waits in **Review**. Opening one shows what changed since the
@@ -486,7 +502,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 135 Python tests
+python3 -m pytest tests -q                  # 143 Python tests
 DAXLIN_TEST_POSTGRES=postgresql://postgres@localhost/ws_test python3 -m pytest tests -q   # the same on Postgres
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix
