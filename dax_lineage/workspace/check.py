@@ -143,7 +143,8 @@ def check_version(store: Store, version_id: int, rules: Optional[list] = None) -
             con.execute("DELETE FROM finding WHERE version_id = ?", (version_id,))
             con.execute("DELETE FROM version_check WHERE version_id = ?", (version_id,))
         return None
-    rules = rules or rule_set(store)
+    from .policy import effective_rules
+    rules = effective_rules(store, version["model_id"], rules or rule_set(store))
     rows = store.version_rows(version_id)
     from .metrics import for_rules
     results = R.run(rules, rows, bool(version["has_report"]), for_rules(store, version["model_id"]))
@@ -208,7 +209,9 @@ def version_check(store: Store, version_id: int) -> Optional[dict]:
             "SELECT f.*, o.id AS object_id FROM finding f LEFT JOIN object o ON o.version_id = f.version_id "
             "AND o.node = f.node WHERE f.version_id = ? ORDER BY CASE f.severity WHEN 'error' THEN 0 "
             "WHEN 'warning' THEN 1 ELSE 2 END, f.rule_id, f.label", (version_id,)))
-    out["stale"] = out["rules_hash"] != rules_hash(rule_set(store))
+    from .policy import effective_rules
+    model_id = store.version(version_id)["model_id"]
+    out["stale"] = out["rules_hash"] != rules_hash(effective_rules(store, model_id))
     return out
 
 

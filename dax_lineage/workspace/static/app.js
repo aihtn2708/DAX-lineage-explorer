@@ -190,6 +190,7 @@ async function homeView() {
       { label: "Unused measures", num: true, cell: (m) => (m.status !== "ok" || !m.has_report ? h("span", { class: "muted" }, "–")
         : m.unused_measures ? h("b", { class: "err" }, n(m.unused_measures)) : "0") },
       { label: "Score", num: true, cell: (m) => scoreText(m.score) },
+      { label: "Tier", cell: (m) => (m.kind === "model" ? tierBadge(m.tier) : "") },
       { label: "Owner", cell: (m) => m.owner },
     ], models, "No models yet: add a folder and scan it."),
     live.length !== models.length ? h("p", { class: "muted small" }, "Files no longer found are kept with their history.") : null,
@@ -304,6 +305,7 @@ async function modelView(id, params) {
         m.version_id ? h("div", { class: "bar" }, h("a", { class: "graph-link", href: `/explorer/version/${m.version_id}` }, "Open the lineage graph")) : null,
         m.kind === "model" && m.status === "ok" ? h("div", { class: "bar" }, h("a", { href: `#/model/${m.id}/edit` }, "Describe and organise measures…"),
           " · ", h("a", { href: `#/changes?status=all` }, "changes")) : null,
+        m.kind === "model" ? modelPolicyPanel(m) : null,
         h("h2", {}, "About this model"),
         h("div", { class: "panel form" },
           h("label", {}, "Owner", owner), h("label", {}, "Team", team), h("label", {}, "Notes", notes),
@@ -445,7 +447,7 @@ async function decisionsView(params) {
 // -- milestone 2: review ------------------------------------------------------
 
 const REVIEW = { pending: "waiting for review", approved: "approved", changes_requested: "changes requested",
-  baseline: "first version", unreadable: "could not be read" };
+  baseline: "first version", unreadable: "could not be read", not_required: "no review needed" };
 const reviewBadge = (state) => h("span", { class: `badge ${state}` }, REVIEW[state] || state);
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const FIELD_NAMES = { table_name: "home table", description: "description", display_folder: "display folder",
@@ -613,10 +615,13 @@ async function versionView(id, params) {
             h("label", {}, "Your name", by),
             h("label", {}, "Note", note),
             h("div", { class: "buttons" },
-              h("button", { class: "good", disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "approved", note: note.value }) }, "Approve"),
+              h("button", { class: "good", disabled: readOnly || (r.policy && !r.policy.ok),
+                title: r.policy && !r.policy.ok ? `This save breaks the ${r.policy.tier} policy: see Policy below` : "",
+                onclick: () => post(`/api/versions/${id}/review`, { status: "approved", note: note.value }) }, "Approve"),
               h("button", { class: "bad", disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "changes_requested", note: note.value }) }, "Request changes"),
               v.review !== "pending" ? h("button", { disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "pending", note: note.value }) }, "Reopen") : null),
             say)] : null,
+        reviewable ? policyPanel(r.policy, post, id, readOnly) : null,
         h("h2", {}, "Discussion"),
         h("div", { class: "panel" },
           comments.filter((x) => !x.object_key).length ? thread(comments.filter((x) => !x.object_key)) : h("p", { class: "muted small" }, "No comments yet."),
@@ -684,7 +689,8 @@ async function standardsView(params) {
 
   show(
     h("h1", {}, "Standards"),
-    h("p", { class: "sub" }, "The rules every model is checked against on each scan. Change one and every model is checked again."),
+    h("p", { class: "sub" }, "The rules every model is checked against on each scan. Change one and every model is checked again. ",
+      h("a", { href: "#/policies" }, "Policies"), " make them stricter or looser by tier."),
     h("div", { class: "tiles" },
       tile(data.average, "average score"),
       tile(data.models.reduce((a, m) => a + m.errors, 0), "errors", data.models.some((m) => m.errors)),
@@ -1316,6 +1322,142 @@ function metricPanel(o) {
 
 // -- routing ------------------------------------------------------------------
 
+// -- governance G3: policies ----------------------------------------------------
+
+const TIER_LABEL = { personal: "personal", team: "team", certified: "certified" };
+const tierBadge = (tier) => h("span", { class: `badge tier-${tier}`, title: `${tier} tier` }, TIER_LABEL[tier] || tier);
+
+function tierRules(t) {
+  const parts = [t.require_review ? "every save reviewed" : "no review needed"];
+  if (t.no_new_errors) parts.push("no new errors");
+  if (t.max_score_drop !== null && t.max_score_drop !== undefined) parts.push(`score may fall by at most ${t.max_score_drop}`);
+  if (t.min_score !== null && t.min_score !== undefined) parts.push(`score at least ${t.min_score}`);
+  const stricter = Object.keys(t.rules || {}).length;
+  if (stricter) parts.push(`${plural(stricter, "rule")} set differently`);
+  return parts.join("; ");
+}
+
+function modelPolicyPanel(m) {
+  const p = m.policy;
+  if (!p) return null;
+  const say = h("span", { class: "small" });
+  const select = h("select", { disabled: !can("admin") || (summaryCache && summaryCache.read_only), "aria-label": "Tier",
+    onchange: async (e) => {
+      try {
+        await api(`/api/models/${m.id}/tier`, { tier: e.target.value });
+        await modelView(m.id, new URLSearchParams());
+      } catch (err) { say.className = "err small"; say.textContent = err.message; }
+    } }, p.order.map((t) => h("option", { value: t, selected: t === p.tier }, TIER_LABEL[t])));
+  return [h("h2", {}, "Policy"),
+    h("div", { class: "panel" },
+      h("div", { class: "bar" }, h("span", {}, "Tier "), select, h("span", { class: "grow" }),
+        p.ok ? h("span", { class: "badge approved" }, "keeps to its policy") : h("span", { class: "badge changes_requested" }, "out of policy")),
+      h("p", { class: "small" }, tierRules(p.settings)),
+      p.problems.length ? h("ul", { class: "small err" }, p.problems.map((x) => h("li", {}, x))) : null,
+      h("p", { class: "muted small" }, can("admin") ? "Changing the tier checks the model again with that tier's rules. " : "An admin sets the tier. ",
+        h("a", { href: "#/policies" }, "What each tier asks")),
+      say)];
+}
+
+function policyPanel(policy, post, id, readOnly) {
+  if (!policy) return null;
+  const failing = policy.checks.filter((c) => !c.ok);
+  const reason = h("textarea", { placeholder: "Why this save may be approved anyway" });
+  return [h("h2", {}, "Policy"),
+    h("div", { class: `panel policy ${policy.ok ? "ok" : "bad"}` },
+      h("div", { class: "bar" }, tierBadge(policy.tier), h("span", { class: "grow small" }, ` tier: ${policy.require_review ? "every save is reviewed" : "no review needed"}`)),
+      policy.checks.length ? h("ul", { class: "plain checks" }, policy.checks.map((c) => h("li", { class: c.ok ? "pass" : "fail" },
+        h("span", { class: "mark", "aria-hidden": "true" }, c.ok ? "✓" : "✗"), h("b", {}, c.label),
+        h("div", { class: "muted small" }, c.detail))))
+        : h("p", { class: "muted small" }, "This tier has no checks for a save."),
+      failing.length ? (can("admin")
+        ? h("details", { class: "override" }, h("summary", {}, "Approve anyway"),
+          h("div", { class: "form" }, h("label", {}, "Reason (kept with the review and in the audit log)", reason),
+            h("div", {}, h("button", { class: "bad", disabled: readOnly, onclick: () => post(`/api/versions/${id}/review`, { status: "approved", override: reason.value }) }, "Approve despite the policy"))))
+        : h("p", { class: "small" }, "This save cannot be approved as it is. Ask for changes, or ask an admin."))
+        : null)];
+}
+
+async function policiesView() {
+  const data = await api("/api/policies");
+  const readOnly = (summaryCache && summaryCache.read_only) || !can("admin");
+  const say = h("span", { class: "small" });
+  const save = async (tier, body) => {
+    try {
+      await api(`/api/policies/${tier}`, body);
+      await policiesView();
+    } catch (err) { say.className = "err small"; say.textContent = `${tier}: ${err.message}`; }
+  };
+  const tiers = data.order;
+  const settingCell = (tier, key) => {
+    const value = data.tiers[tier][key];
+    if (typeof value === "boolean") {
+      return h("input", { type: "checkbox", checked: value, disabled: readOnly, "aria-label": `${data.settings[key]}, ${tier}`,
+        onchange: (e) => save(tier, { [key]: e.target.checked }) });
+    }
+    const input = h("input", { class: "param", type: "number", min: 0, max: 100, value: value === null ? "" : String(value),
+      placeholder: "none", disabled: readOnly, "aria-label": `${data.settings[key]}, ${tier}` });
+    input.addEventListener("change", () => save(tier, { [key]: input.value }));
+    return input;
+  };
+  const ruleCell = (tier, rule) => {
+    const current = data.tiers[tier].rules[rule.id] || {};
+    const value = current.enabled === false ? "off" : current.severity || "";
+    return h("select", { disabled: readOnly, "aria-label": `${rule.title}, ${tier}`, class: value ? "changed" : "",
+      onchange: (e) => {
+        const rules = { ...data.tiers[tier].rules };
+        const v = e.target.value;
+        if (!v) delete rules[rule.id];
+        else rules[rule.id] = v === "off" ? { enabled: false } : { severity: v, enabled: true };
+        save(tier, { rules });
+      } },
+      h("option", { value: "" }, rule.enabled ? `as everywhere (${SEV_LABEL[rule.severity]})` : "as everywhere (off)"),
+      ["error", "warning", "info"].map((x) => h("option", { value: x, selected: x === value }, SEV_LABEL[x])),
+      h("option", { value: "off", selected: value === "off" }, "off"));
+  };
+  const out = data.models.filter((m) => !m.ok);
+  const count = (tier) => data.models.filter((m) => m.tier === tier).length;
+
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/standards" }, "Standards"), " › ", "Policies"),
+    h("h1", {}, "Policies"),
+    h("p", { class: "sub" }, "How strict the workspace is with a model depends on its tier. A save that breaks its tier's policy cannot be approved; an admin can still approve it with a reason."),
+    h("div", { class: "tiles" },
+      tiers.map((t) => tile(count(t), `${TIER_LABEL[t]} models`)),
+      tile(out.length, "out of policy", out.length > 0)),
+    h("h2", {}, "Out of policy"),
+    table([
+      { label: "Model", cell: (m) => h("a", { href: `#/model/${m.id}` }, m.name) },
+      { label: "Tier", cell: (m) => tierBadge(m.tier) },
+      { label: "Score", num: true, cell: (m) => scoreText(m.score) },
+      { label: "Why", cell: (m) => m.problems.join("; ") },
+      { label: "Owner", cell: (m) => m.owner },
+    ], out, "Every model keeps to its tier's policy."),
+    h("h2", {}, "What each tier asks"),
+    h("table", { class: "matrix" },
+      h("thead", {}, h("tr", {}, h("th", {}, ""), tiers.map((t) => h("th", {}, tierBadge(t), h("div", { class: "muted small why" }, data.tiers[t].description))))),
+      h("tbody", {}, Object.keys(data.settings).map((key) => h("tr", {}, h("td", {}, data.settings[key]),
+        tiers.map((t) => h("td", {}, settingCell(t, key))))))),
+    h("p", { class: "muted small" }, "Scores run from 0 to 100. Leave a number empty for no limit."),
+    h("h2", {}, "Rules by tier"),
+    h("p", { class: "muted small" }, "Each tier uses the team's rules from Standards, except where it is set differently here."),
+    h("table", { class: "matrix" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Rule"), tiers.map((t) => h("th", {}, tierBadge(t))))),
+      h("tbody", {}, data.rules.map((r) => h("tr", {}, h("td", {}, r.title), tiers.map((t) => h("td", {}, ruleCell(t, r))))))),
+    h("div", { class: "bar" }, h("span", { class: "grow" }, say),
+      can("admin") ? tiers.map((t) => h("button", { disabled: readOnly, onclick: () => save(t, { reset: true }) }, `Reset ${TIER_LABEL[t]}`)) : null),
+    h("h2", {}, "Models by tier"),
+    table([
+      { label: "Model", cell: (m) => h("a", { href: `#/model/${m.id}` }, m.name) },
+      { label: "Tier", cell: (m) => (readOnly ? tierBadge(m.tier) : h("select", { "aria-label": `Tier of ${m.name}`, onchange: async (e) => {
+        try { await api(`/api/models/${m.id}/tier`, { tier: e.target.value }); await policiesView(); } catch (err) { say.className = "err small"; say.textContent = err.message; }
+      } }, tiers.map((t) => h("option", { value: t, selected: t === m.tier }, TIER_LABEL[t])))) },
+      { label: "Score", num: true, cell: (m) => scoreText(m.score) },
+      { label: "Policy", cell: (m) => (m.ok ? h("span", { class: "muted small" }, "keeps to it") : h("span", { class: "err small" }, "out of policy")) },
+    ], data.models, "No models yet."),
+  );
+}
+
 async function route() {
   const [path, query] = (location.hash.replace(/^#/, "") || "/").split("?");
   const params = new URLSearchParams(query || "");
@@ -1348,6 +1490,7 @@ async function route() {
     else if ((match = path.match(/^\/change\/(\d+)$/))) await changeView(match[1]);
     else if ((match = path.match(/^\/model\/(\d+)\/edit$/))) await editModelView(match[1], params);
     else if (path === "/standards/owner") await ownerView(params);
+    else if (path === "/policies") await policiesView();
     else if ((match = path.match(/^\/version\/(\d+)$/))) await versionView(match[1], params);
     else await homeView();
   } catch (err) {

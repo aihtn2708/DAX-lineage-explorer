@@ -18,7 +18,7 @@ from pathlib import Path
 from .store import SCHEMA_VERSION, Store
 
 # parents before children, so foreign keys hold while restoring
-TABLES = ["meta", "folder", "model", "metric", "metric_variant", "model_version", "object", "dependency", "visual", "usage", "annotation",
+TABLES = ["meta", "folder", "model", "model_policy", "tier_policy", "metric", "metric_variant", "model_version", "object", "dependency", "visual", "usage", "annotation",
           "review", "comment", "rule_setting", "rule_exception", "version_check", "finding", "change_request",
           "change_op", "change_event", "account", "api_token", "audit", "scan_run"]
 FORMAT = "daxlin-workspace-backup"

@@ -226,7 +226,16 @@ def test_review_api(reviewed):
         assert call(port, "POST", f"/api/versions/{vid}/comments", {"body": "Looks fine", "by": "An"})[0] == 200
         assert call(port, "POST", f"/api/versions/{vid}/review", {"status": "approved", "by": "An"},
                     {"Origin": "http://attacker.example"})[0] == 403
-        assert call(port, "POST", f"/api/versions/{vid}/review", {"status": "approved", "by": "An"})[0] == 200
+        # the save breaks a visual, which the team policy does not let anyone approve without a reason
+        policy = review["policy"]
+        assert policy["tier"] == "team" and not policy["ok"]
+        assert [c["id"] for c in policy["checks"] if not c["ok"]] == ["no_new_errors"]
+        status, refused, _ = call(port, "POST", f"/api/versions/{vid}/review", {"status": "approved", "by": "An"})
+        assert status == 409 and "team policy" in refused["error"]
+        assert call(port, "POST", f"/api/versions/{vid}/review", {"status": "changes_requested", "by": "An"})[0] == 200
+        assert call(port, "POST", f"/api/versions/{vid}/review",
+                    {"status": "approved", "by": "An", "override": "Card fixed in the next save"})[0] == 200
+        assert "Approved despite the team policy" in store.comments(vid)[-1]["body"]
         assert call(port, "GET", "/api/reviews")[1] == []
         assert len(call(port, "GET", "/api/reviews?status=all")[1]) == 1
         assert call(port, "GET", f"/api/versions/{vid}")[1]["version"]["review"] == "approved"

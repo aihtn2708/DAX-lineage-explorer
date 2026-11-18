@@ -112,7 +112,8 @@ COOKIE = "pbiw_session"
 
 def required_role(path: str, body: dict) -> str:
     """The least role that may make this POST."""
-    if path == "/api/scan" or path.startswith("/api/admin/") or path.startswith("/api/folders"):
+    if (path == "/api/scan" or path.startswith(("/api/admin/", "/api/folders", "/api/policies"))
+            or re.fullmatch(r"/api/models/\d+/tier", path)):
         return "admin"
     if path.startswith("/api/account/"):
         return "viewer"
@@ -457,6 +458,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if path == "/api/account":
                 tokens = A.tokens(store, self.who["username"]) if self.signed else []
                 return HTTPStatus.OK, {"user": self.who, "tokens": tokens, "mode": auth.mode}
+            if path == "/api/policies":
+                from .policy import overview
+                return HTTPStatus.OK, overview(store)
             if path == "/api/metrics":
                 from .metrics import glossary
                 return HTTPStatus.OK, glossary(store)
@@ -495,6 +499,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "against must be a version id")
                 review = compare(store, int(match.group(1)), int(against) if against else None)
                 review["comments"] = store.comments(int(match.group(1)))
+                from .policy import evaluate_version
+                review["policy"] = evaluate_version(store, int(match.group(1)),
+                                                    review["against"]["id"] if review["against"] else None)
                 from .metrics import certified_defined_by
                 changed = [i["key"] for part in ("edited", "renamed", "removed") for i in review.get(part, [])
                            if not i.get("follows_rename")]
@@ -512,6 +519,8 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 if match.group(1) == "models":
                     found["check"] = standards_check.version_check(store, found["version_id"]) \
                         if found["version_id"] else None
+                    from .policy import model_policy
+                    found["policy"] = model_policy(store, found["id"])
                 else:
                     if found["kind"] == "measure" and found["in_model"]:
                         from .metrics import for_object
@@ -559,6 +568,20 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     return HTTPStatus.OK, {"token": A.create_token(store, self.who["username"], str(body.get("name", "")))}
                 if path == "/api/account/tokens/revoke":
                     return HTTPStatus.OK, {"revoked": A.revoke_token(store, str(body.get("prefix", "")), self.who["username"])}
+            match = re.fullmatch(r"/api/policies/(\w+)", path)
+            if match:
+                from . import policy as P
+                body = self._body()
+                if body.get("reset"):
+                    return HTTPStatus.OK, P.reset_tier(store, match.group(1))
+                changes = {k: v for k, v in body.items() if k in P.SETTINGS or k == "rules"}
+                return HTTPStatus.OK, P.set_tier_settings(store, match.group(1), changes, str(body.get("by", "")))
+            match = re.fullmatch(r"/api/models/(\d+)/tier", path)
+            if match:
+                from .policy import set_tier
+                body = self._body()
+                return HTTPStatus.OK, {"tier": set_tier(store, int(match.group(1)), str(body.get("tier", "")),
+                                                        str(body.get("by", "")))}
             if path == "/api/metrics":
                 from . import metrics as M
                 body = self._body()
@@ -669,8 +692,24 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 if match.group(2) == "comments":
                     return HTTPStatus.OK, store.add_comment(version_id, str(body.get("body", "")), str(body.get("by", "")),
                                                             str(body.get("object_key", "")))
-                return HTTPStatus.OK, store.set_review(version_id, str(body.get("status", "")), str(body.get("by", "")),
-                                                       str(body.get("note", "")))
+                status, note = str(body.get("status", "")), str(body.get("note", ""))
+                if status == "approved":
+                    from .policy import evaluate_version
+                    verdict = evaluate_version(store, version_id)
+                    failing = [c for c in (verdict or {}).get("checks", []) if not c["ok"]]
+                    if failing:
+                        reason = str(body.get("override", "")).strip()
+                        if not reason or A.rank(self.who["role"]) < A.rank("admin"):
+                            raise ApiError(HTTPStatus.CONFLICT,
+                                           f"this save breaks the {verdict['tier']} policy: "
+                                           + "; ".join(f"{c['label']} ({c['detail']})" for c in failing)
+                                           + (". An admin can approve it anyway, with a reason."
+                                              if A.rank(self.who["role"]) < A.rank("admin") else
+                                              ". To approve it anyway, give a reason."))
+                        note = (f"Approved despite the {verdict['tier']} policy ("
+                                + "; ".join(c["label"] for c in failing) + f"): {reason}"
+                                + (f"\n{note}" if note.strip() else ""))
+                return HTTPStatus.OK, store.set_review(version_id, status, str(body.get("by", "")), note)
             match = re.fullmatch(r"/api/models/(\d+)", path)
             if match:
                 body = self._body()
