@@ -70,6 +70,9 @@ def build(docs: Path) -> str:
                   r'<small>[^<]*</small>', "", html)
     html = html.replace(""" <a href="dax-lineage-explorer.html" download>Download it</a> to run offline.""",
                         " This copy runs from your disk.")
+    # the workspace demo is part of the site, not of this file
+    html = re.sub(r'\s*<a class="button" href="workspace-demo/"[^>]*>[^<]*</a>', "", html)
+    html = re.sub(r'\s*<p class="private">Working as a team\?.*?</p>', "", html, flags=re.S)
     leftover = re.findall(r'(?:src|href)="(?!data:|#|https://github\.com/)([^"]+)"', html)
     if leftover:
         raise ValueError(f"offline page still refers to outside files: {leftover}")

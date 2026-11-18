@@ -19,6 +19,7 @@
   <div class="stats" id="stats" hidden></div>
   <div class="actions">
     <button id="openAnother" hidden>Open another file</button>
+    <a class="button" href="workspace-demo/" title="Reviews, standards, metrics and policies for a team's Power BI files">Team workspace demo</a>
     <a class="button" href="samples/info_sample.xlsx" download>Download sample .xlsx</a>
     <a class="button" href="https://github.com/aihtn2708/DAX-lineage-explorer" rel="noopener">GitHub</a>
     <button id="theme" title="Switch light / dark">Theme</button>
@@ -47,6 +48,8 @@
       <p class="private">Files are read in this browser tab. Nothing is uploaded anywhere, and the page's
         security policy blocks any request to another site. <a href="dax-lineage-explorer.html" download>Download it</a> to run offline.
         From a .pbix only the report layout and the model's definitions are read, never its data.</p>
+      <p class="private">Working as a team? The <a href="workspace-demo/">workspace demo</a>
+        shows the team workspace: every file's versions reviewed, standards, agreed metrics and policies, on made-up models.</p>
       <input type="file" id="addReportFile" multiple accept=".pbix,.pbit,.zip,.json,.bim" hidden>
     </div>
     <div class="error" id="error" hidden></div>

@@ -156,8 +156,9 @@ def explorer_page(graph: dict, title: str, subtitle: str, focus: str = "", back:
     return page[:index] + boot + page[index:]
 
 
-def page_for(store: Store, version_id: int, focus: str = "", against: Optional[int] = None,
-             change: Optional[dict] = None) -> Optional[str]:
+def page_data(store: Store, version_id: int, against: Optional[int] = None,
+              change: Optional[dict] = None) -> Optional[dict]:
+    """The graph of a version with what a review or a change marks, its title, and where "back" goes."""
     version = store.version(version_id)
     if version is None:
         return None
@@ -176,8 +177,16 @@ def page_for(store: Store, version_id: int, focus: str = "", against: Optional[i
     report = stats.get("report")
     subtitle = (f"{stats['measures']} measures · {stats['columns']} columns · {stats['edges']} dependencies"
                 + (f" · {report['visuals']} visuals" if report else "") + (f" · {what}" if what else ""))
-    title = f"{version['model_name']} v{version['number']}"
-    return explorer_page(graph, title, subtitle, focus, back)
+    return {"graph": graph, "title": f"{version['model_name']} v{version['number']}", "subtitle": subtitle,
+            "back": back}
+
+
+def page_for(store: Store, version_id: int, focus: str = "", against: Optional[int] = None,
+             change: Optional[dict] = None) -> Optional[str]:
+    data = page_data(store, version_id, against, change)
+    if data is None:
+        return None
+    return explorer_page(data["graph"], data["title"], data["subtitle"], focus, data["back"])
 
 
 def page_headers() -> dict:
