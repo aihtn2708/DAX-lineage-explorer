@@ -11,6 +11,64 @@ and the report file.
 
 ![Tracing Sales YoY % back to the columns it reads](docs/assets/screenshot-trace.png)
 
+## Why this exists
+
+Good Power BI tools already exist, and this project does not try to replace them. Each answers its own
+question well:
+
+- **DAX Studio** answers *why is this slow?* It runs queries against an open model and shows server
+  timings, query plans and storage statistics.
+- **Tabular Editor** answers *how do I change the model safely?*, and its Best Practice Analyzer checks
+  a model against a large set of community rules.
+- **Measure Killer** answers *what can I delete?*
+- **Microsoft's own tools** answer the questions of a team that publishes to the service:
+  - lineage view and impact analysis show which reports use a published model;
+  - PBIP, Git integration and deployment pipelines bring version control;
+  - metric sets collect trusted metrics in Fabric.
+
+What started this project was a team with a different question: what happened to a measure, and in
+which visuals, between yesterday's file and today's? That team kept its reports as ordinary `.pbix`
+files on SharePoint and OneDrive. Each file carried its own model, the key measures were copied from
+file to file, and nobody had Fabric capacity, Git or a release pipeline. In that setting:
+
+- **Lineage stopped at the model.** The service shows which report uses which model. It does not show
+  that a measure reads three others and sits on four visuals, and that is the thing you need before a
+  rename. The first piece of this repository is the lineage explorer: it builds that graph from the
+  output of `INFO.MEASURES()` and the report file, entirely in the browser.
+- **Version control assumed a different way of working.** Git integration needs PBIP projects and a
+  Fabric capacity. Even then, a text diff of TMDL shows changed lines, not that a measure was renamed or
+  that two visuals now point at a field that no longer exists.
+- **The same metric existed in five versions.** With self-contained files, "Total Sales" is copied
+  everywhere and slowly drifts. Central metric definitions live in the Power BI service, not in the
+  files people actually edit.
+- **Standards were a document, not a check.** Rule engines exist, but they run one model at a time on
+  one developer's PC. Nothing kept score across the team's files, or stopped a risky save from being
+  accepted.
+- **Privacy mattered.** The models describe the business. Sending them to a cloud service, or
+  installing a tenant-wide scanner, was not an option.
+
+So the **team workspace** grew from the lineage explorer. It watches the folders where the `.pbix`
+files already live, and it:
+
+- keeps every saved version;
+- shows each save as a review of what changed, using the explorer's graph to show what a change
+  touches;
+- checks every model against the team's standards;
+- tracks agreed metrics and flags their drifting copies;
+- holds each model to a policy that suits how much people rely on it;
+- makes approved changes through a small companion for Power BI Desktop.
+
+Everything runs on the team's own machines.
+
+It works best **alongside** the tools above, not instead of them:
+
+- use DAX Studio when a visual is slow, and Tabular Editor for heavy model work;
+- use the workspace to see what changed, who approved it, and whether it keeps to the team's
+  standards.
+
+Teams that later move to PBIP, Git and Fabric can keep the same habits of review, standards and
+agreed metrics. The workspace was built so those habits could start before any of that was in place.
+
 ## Run it locally
 
 Your model never has to leave your machine. Download the repository
