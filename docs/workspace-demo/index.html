@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>Power BI workspace: demo</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="demo.css">
+  <script src="demo.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="demo-bar" role="note">
+    <b>Demo</b>
+    <span class="grow">A team workspace with four made-up Power BI files and two weeks of history. Comment, review, approve or reject changes and edit notes: it all happens in this browser tab and nothing is sent anywhere. <span id="demoActions"></span></span>
+    <a href="../">Lineage explorer</a>
+    <a href="https://github.com/aihtn2708/DAX-lineage-explorer#team-workspace-every-model-in-one-catalogue-preview" rel="noopener">Run it on your PC</a>
+    <button id="demoReset" type="button">Start over</button>
+  </div>
+  <header>
+    <a class="brand" href="#/">Power BI workspace <span>catalogue</span></a>
+    <form id="searchForm" role="search">
+      <input id="q" type="search" placeholder="Find a measure or column in every model" aria-label="Search" autocomplete="off">
+      <label class="check"><input id="inDax" type="checkbox"> in DAX too</label>
+    </form>
+    <nav>
+      <a href="#/">Models</a>
+      <a href="#/review" id="reviewNav">Review</a>
+      <a href="#/metrics">Metrics</a>
+      <a href="#/standards">Standards</a>
+      <a href="#/changes" id="changesNav">Changes</a>
+      <a href="#/decisions">Cleanup list</a>
+      <a href="#/admin" id="adminNav" hidden>Admin</a>
+      <a href="#/account" id="accountNav" hidden></a>
+    </nav>
+  </header>
+  <div id="demoToast" class="demo-toast" role="status" hidden></div>
+  <main id="view" aria-live="polite"></main>
+  <footer>Demo of the workspace that runs on your own machines. The sample models are made up.</footer>
+</body>
+</html>

@@ -50,6 +50,10 @@ If you do want the short command: `py -m pip install -e .`, then add the
 
 ## Team workspace: every model in one catalogue (preview)
 
+**[Try the workspace demo](https://aihtn2708.github.io/DAX-lineage-explorer/workspace-demo/)**: four
+made-up Power BI files with two weeks of history. You can comment, review, approve or reject changes and
+edit notes; it all stays in your browser tab. To rebuild it: `python scripts/build_workspace_demo.py`.
+
 For a team that keeps its `.pbix` files on SharePoint or OneDrive: point the workspace at the synced
 folder, and it reads every model each night into a database on your own machine. Then anyone can
 find a measure across all models, see which visuals use it, and leave notes, owners and keep/remove
