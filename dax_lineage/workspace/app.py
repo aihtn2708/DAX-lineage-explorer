@@ -118,6 +118,10 @@ def required_role(path: str, body: dict) -> str:
         return "viewer"
     if re.fullmatch(r"/api/versions/\d+/review", path) or path.startswith("/api/rules/") or path == "/api/exceptions":
         return "reviewer"
+    if re.fullmatch(r"/api/metrics/\d+/variants", path):
+        return "reviewer"
+    if re.fullmatch(r"/api/metrics/\d+", path):
+        return "reviewer" if body.get("action") in ("certify", "deprecate", "define") else "author"
     if re.fullmatch(r"/api/changes/\d+/decision", path):
         return "author" if body.get("status") == "cancelled" else "reviewer"
     return "author"
@@ -357,6 +361,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             mine = request["created_by"] in (self.who["username"], A.name_of(self.who))
             if body.get("status") == "approved" and mine and not auth.allow_self_approval:
                 return "you proposed this change: someone else must approve it"
+            if body.get("status") == "approved" and self.who["role"] != "admin":
+                from .metrics import certified_defined_by, is_owner
+                touched = certified_defined_by(store, request["model_id"], [op["object_key"] for op in request["ops"]])
+                others = [m for m in touched if not is_owner(m, self.who)]
+                if others:
+                    return (f"this changes the certified metric {others[0]['name']}: its owner "
+                            f"({others[0]['owner']}) or an admin approves it")
             if body.get("status") == "cancelled" and not mine and A.rank(self.who["role"]) < A.rank("reviewer"):
                 return "only its author or a reviewer can cancel a change"
             return ""
@@ -446,6 +457,16 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if path == "/api/account":
                 tokens = A.tokens(store, self.who["username"]) if self.signed else []
                 return HTTPStatus.OK, {"user": self.who, "tokens": tokens, "mode": auth.mode}
+            if path == "/api/metrics":
+                from .metrics import glossary
+                return HTTPStatus.OK, glossary(store)
+            match = re.fullmatch(r"/api/metrics/(\d+)", path)
+            if match:
+                from .metrics import detail
+                found = detail(store, int(match.group(1)))
+                if found is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                return HTTPStatus.OK, found
             if path == "/api/changes/ready":
                 return HTTPStatus.OK, {"changes": change_requests.ready(store)}
             if path == "/api/changes":
@@ -474,6 +495,11 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "against must be a version id")
                 review = compare(store, int(match.group(1)), int(against) if against else None)
                 review["comments"] = store.comments(int(match.group(1)))
+                from .metrics import certified_defined_by
+                changed = [i["key"] for part in ("edited", "renamed", "removed") for i in review.get(part, [])
+                           if not i.get("follows_rename")]
+                review["metrics"] = [{"id": m["id"], "name": m["name"], "owner": m["owner"]} for m in
+                                     certified_defined_by(store, review["version"]["model_id"], changed)]
                 review["standards"] = standards_check.compare_checks(
                     store, int(match.group(1)), review["against"]["id"] if review["against"] else None)
                 review["versions"] = store.versions_of(review["version"]["model_id"])
@@ -487,6 +513,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     found["check"] = standards_check.version_check(store, found["version_id"]) \
                         if found["version_id"] else None
                 else:
+                    if found["kind"] == "measure" and found["in_model"]:
+                        from .metrics import for_object
+                        found["metric"] = for_object(store, found["model_id"], found["object_key"], found["name"])
                     titles = {r["id"]: r["title"] for r in standards_check.rule_set(store)}
                     found["findings"] = [dict(f, title=titles.get(f["rule_id"], f["rule_id"])) for f in
                                          standards_check.findings_for(store, found["version_id"], found["object_key"])]
@@ -530,6 +559,43 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     return HTTPStatus.OK, {"token": A.create_token(store, self.who["username"], str(body.get("name", "")))}
                 if path == "/api/account/tokens/revoke":
                     return HTTPStatus.OK, {"revoked": A.revoke_token(store, str(body.get("prefix", "")), self.who["username"])}
+            if path == "/api/metrics":
+                from . import metrics as M
+                body = self._body()
+                return HTTPStatus.OK, M.create(store, int(body["model_id"]), str(body["object_key"]),
+                                               str(body.get("name", "")), str(body.get("definition", "")),
+                                               str(body.get("owner", "")), body.get("aliases"), str(body.get("by", "")))
+            match = re.fullmatch(r"/api/metrics/(\d+)(/variants)?", path)
+            if match:
+                from . import metrics as M
+                body, metric_id = self._body(), int(match.group(1))
+                metric = M.get(store, metric_id)
+                if metric is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "no such metric")
+                if match.group(2):
+                    if body.get("remove"):
+                        return HTTPStatus.OK, {"removed": M.withdraw_variant(store, metric_id, int(body["model_id"]),
+                                                                             str(body["object_key"]))}
+                    M.accept_variant(store, metric_id, int(body["model_id"]), str(body["object_key"]),
+                                     str(body.get("reason", "")), str(body.get("by", "")))
+                    return HTTPStatus.OK, {"ok": True}
+                action = body.get("action")
+                if action in ("update", "delete") and metric["status"] != "draft" and \
+                        A.rank(self.who["role"]) < A.rank("reviewer"):
+                    raise ApiError(HTTPStatus.FORBIDDEN, "a certified or deprecated metric is changed by a reviewer")
+                if action == "update":
+                    return HTTPStatus.OK, M.update(store, metric_id, body.get("name"), body.get("definition"),
+                                                   body.get("owner"), body.get("aliases"))
+                if action == "certify":
+                    return HTTPStatus.OK, M.certify(store, metric_id, str(body.get("by", "")), str(body.get("note", "")))
+                if action == "deprecate":
+                    return HTTPStatus.OK, M.deprecate(store, metric_id, str(body.get("by", "")), str(body.get("note", "")))
+                if action == "define":
+                    return HTTPStatus.OK, M.define_by(store, metric_id, int(body["model_id"]), str(body["object_key"]))
+                if action == "delete":
+                    M.delete(store, metric_id)
+                    return HTTPStatus.OK, {"deleted": True}
+                raise ApiError(HTTPStatus.BAD_REQUEST, "action must be update, certify, deprecate, define or delete")
             if path in ("/api/changes", "/api/changes/preview"):
                 body = self._body()
                 items = body.get("items")

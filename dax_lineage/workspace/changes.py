@@ -125,6 +125,9 @@ def plan(store: Store, model_id: int, items: list) -> dict:
                 (model_id,)):
             in_flight.setdefault(r["object_key"], set()).add(r["id"])
 
+    from .metrics import certified_defined_by
+    guarded = {m["object_key"]: m for m in certified_defined_by(store, model_id, objects)}
+
     def elsewhere(name: str) -> list:
         return sorted({r["name"] for r in reports if r["name_key"] == name.casefold()})
 
@@ -154,6 +157,15 @@ def plan(store: Store, model_id: int, items: list) -> dict:
         seen.add(ident)
         for other in sorted(in_flight.get(o["object_key"], ())):
             warnings.append(f"{name} is already in open change #{other}")
+
+        metric = guarded.get(o["object_key"])
+        if metric is not None and kind_of_edit == "remove":
+            problems.append(f"{name} defines the certified metric {metric['name']}: point the metric at another "
+                            f"measure, or deprecate it, before removing it")
+            continue
+        if metric is not None:
+            warnings.append(f"{name} defines the certified metric {metric['name']}: its owner "
+                            f"({metric['owner'] or 'none set'}) or an admin approves this change")
 
         if kind_of_edit == "remove":
             if o["kind"] != "measure":

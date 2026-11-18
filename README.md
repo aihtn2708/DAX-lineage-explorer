@@ -117,6 +117,33 @@ stored (the .pbix is not read again), for any version:
 
 The page is the same offline explorer: it makes no request at all, not even to the workspace.
 
+### Metrics: one agreed definition, checked in every file
+
+Self-contained .pbix files copy their key measures from file to file, and the copies drift.
+**Metrics** pins the agreed version:
+
+- **Copied across files** lists every measure name found in two or more models, with how many
+  different DAX versions exist: where to start.
+- On the right copy's page, **Make it an agreed metric**: a business definition and an owner. A
+  reviewer **certifies** it, and its DAX becomes the agreed DAX.
+- Every measure with the metric's name (or one of its *also called* names) in every model is then
+  shown as *defines it*, *same DAX*, *accepted variant* (a reviewer said why), or **drift**, with the
+  difference. Spacing, capitals and comments do not count as differences.
+- Drift is a finding of the standards rule *Copies of a certified metric match its agreed DAX*, so it
+  lowers that model's score and lands with its owner. So does a copy of a **deprecated** metric, and a
+  defining measure whose DAX changed after certification, until a reviewer **re-certifies** it.
+- A change request that edits the measure defining a certified metric is approved by the metric's
+  owner or an admin; removing that measure is refused until the metric points elsewhere. A review of
+  a save that changes it says so.
+
+```bash
+daxlin workspace metrics               # the glossary, with same / variants / drift counts
+daxlin workspace metrics drift         # every drifting copy, and whose metric it is
+daxlin workspace metrics candidates    # measures copied across files, not yet metrics
+```
+
+![A certified metric: its agreed DAX, and a copy that drifted in another file](docs/assets/workspace-metric.png)
+
 ### Reviewing each other's changes
 
 Every saved version after the first waits in **Review**. Opening one shows what changed since the
@@ -502,7 +529,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 143 Python tests
+python3 -m pytest tests -q                  # 153 Python tests
 DAXLIN_TEST_POSTGRES=postgresql://postgres@localhost/ws_test python3 -m pytest tests -q   # the same on Postgres
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix

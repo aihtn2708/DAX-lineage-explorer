@@ -408,6 +408,7 @@ async function objectView(id) {
           a.updated_at ? h("div", { class: "muted small" }, `Last changed ${fmtDate(a.updated_at)}${a.updated_by ? ` by ${a.updated_by}` : ""}`) : null,
           h("div", { class: "muted small" }, "Notes follow this object through renames and new versions.")),
         o.is_current ? [h("h2", {}, "Standards"), findingsPanel(o, readOnly)] : null,
+        metricPanel(o),
         objectActions(o),
         h("h2", {}, "History"),
         h("ul", { class: "plain panel" }, changes.map((v) => h("li", {},
@@ -563,6 +564,8 @@ async function versionView(id, params) {
           tile(c.broken, "broken references", c.broken > 0), tile(c.dax, "DAX changes"), tile(c.renamed, "renamed"),
           tile(c.added, "added"), tile(c.removed, "removed"), tile(c.visuals, "visuals changed")),
         !c.total ? h("div", { class: "empty" }, "No change to measures, columns or visuals. Something else in the file changed, such as data or formatting.") : null,
+        (r.metrics || []).length ? h("div", { class: "notice bad" }, h("b", {}, "This save changes a certified metric"),
+          h("ul", {}, r.metrics.map((x) => h("li", {}, h("a", { href: `#/metric/${x.id}` }, x.name), ` (owner ${x.owner || "none"}): they should approve it, or re-certify it on the metric's page.`)))) : null,
         standardsDelta(r.standards),
         section("Broken: used, but no longer in the model", r.broken, (b) => h("div", { class: "change" },
           h("div", { class: "change-head" }, h("b", { class: "err" }, b.label)),
@@ -1146,6 +1149,171 @@ async function adminView(params) {
   );
 }
 
+
+// -- governance G2: the metric glossary --------------------------------------------------
+
+const METRIC_STATUS = { draft: "draft", certified: "certified", deprecated: "deprecated" };
+const COPY = { defines: "defines it", same: "same DAX", variant: "accepted variant", drift: "drift" };
+const metricBadge = (s) => h("span", { class: `badge metric-${s}` }, METRIC_STATUS[s] || s);
+const copyBadge = (s) => h("span", { class: `badge copy-${s}` }, COPY[s] || s);
+
+// a small line diff for two DAX texts (longest common subsequence of lines)
+function lineDiff(a, b) {
+  const x = (a || "").split("\n"), y = (b || "").split("\n");
+  const n = x.length, m = y.length;
+  const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const lines = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { lines.push({ op: " ", text: x[i] }); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) lines.push({ op: "-", text: x[i++] });
+    else lines.push({ op: "+", text: y[j++] });
+  }
+  while (i < n) lines.push({ op: "-", text: x[i++] });
+  while (j < m) lines.push({ op: "+", text: y[j++] });
+  return { lines };
+}
+
+async function metricsView() {
+  const data = await api("/api/metrics");
+  const ms = data.metrics;
+  const drift = ms.reduce((a, m) => a + m.counts.drift, 0);
+  show(
+    h("h1", {}, "Metrics"),
+    h("p", { class: "sub" }, "One agreed definition per metric, and every copy of it across your files. Copies that drift from the agreed DAX count against each model's standards score."),
+    h("div", { class: "tiles" },
+      tile(ms.filter((m) => m.status === "certified").length, "certified metrics"),
+      tile(ms.filter((m) => m.status === "draft").length, "drafts waiting for a reviewer"),
+      tile(drift, "copies drifting", drift > 0),
+      tile(ms.filter((m) => m.source === "changed").length, "changed at the source", ms.some((m) => m.source === "changed")),
+      tile(data.candidates.length, "measures copied across files, not yet metrics")),
+    h("h2", {}, "Glossary"),
+    table([
+      { label: "Metric", cell: (m) => [h("a", { href: `#/metric/${m.id}` }, m.name), m.aliases.length ? h("div", { class: "muted small" }, `also ${m.aliases.join(", ")}`) : null] },
+      { label: "Status", cell: (m) => [metricBadge(m.status), m.source === "changed" ? h("div", { class: "err small" }, "changed at the source") : m.source === "gone" ? h("div", { class: "err small" }, "source measure gone") : null] },
+      { label: "Owner", cell: (m) => m.owner },
+      { label: "Defined in", cell: (m) => (m.model_name ? h("a", { href: `#/model/${m.model_id}` }, m.model_name) : "") },
+      { label: "Models", num: true, cell: (m) => m.models },
+      { label: "Same", num: true, cell: (m) => m.counts.same },
+      { label: "Variants", num: true, cell: (m) => m.counts.variant },
+      { label: "Drift", num: true, cell: (m) => (m.counts.drift ? h("b", { class: "err" }, m.counts.drift) : "0") },
+      { label: "Definition", cell: (m) => h("span", { class: "small" }, (m.definition || "").slice(0, 120)) },
+    ], ms, "No metrics yet. Open a measure and choose “Make it an agreed metric”, starting with the ones copied across files below."),
+    h("h2", {}, `Copied across files (${data.candidates.length})`),
+    h("p", { class: "muted small" }, "Measures with the same name in two or more models. Open the copy that is right and make it the agreed metric; the others are then checked against it."),
+    table([
+      { label: "Measure", cell: (c) => h("b", {}, c.name) },
+      { label: "Models", num: true, cell: (c) => c.models },
+      { label: "Different DAX", num: true, cell: (c) => (c.versions > 1 ? h("b", { class: "err" }, c.versions) : "1 (all the same)") },
+      { label: "Copies", cell: (c) => h("div", { class: "chips" }, c.copies.map((x) => h("a", { class: "chip", href: `#/object/${x.object_id}` }, x.model_name))) },
+    ], data.candidates, "No measure name appears in more than one model."),
+  );
+}
+
+async function metricView(id) {
+  const m = await api(`/api/metrics/${id}`);
+  const by = h("input", { value: me(), placeholder: "your name" });
+  const note = h("input", { placeholder: "note (optional)" });
+  const say = h("span", { class: "small" });
+  const post = async (path, body) => {
+    setMe(by.value);
+    try { await api(path, { ...body, by: by.value }); await metricView(id); }
+    catch (err) { say.className = "err small"; say.textContent = err.message; }
+  };
+  const act = (action, text, cls, extra) => h("button", { class: cls || "", onclick: () => post(`/api/metrics/${id}`, { action, note: note.value, ...(extra || {}) }) }, text);
+  const name = h("input", { value: m.name });
+  const aliases = h("input", { value: m.aliases.join(", "), placeholder: "other names it goes by, separated by commas" });
+  const definition = h("textarea", {}, m.definition);
+  const owner = h("input", { value: m.owner, placeholder: "who decides what it means" });
+  const src = m.source;
+  const copyRow = (c) => {
+    const reason = h("input", { placeholder: "why this copy may differ" });
+    const extra = [];
+    if (c.status === "drift") {
+      extra.push(h("details", {}, h("summary", { class: "small" }, "How it differs from the agreed DAX"), diffBlock(lineDiff(m.expression, c.expression))));
+      if (can("reviewer")) extra.push(h("details", {}, h("summary", { class: "small" }, "Accept it as a variant, or make it the definition"),
+        h("div", { class: "form" }, reason, h("div", { class: "buttons" },
+          h("button", { onclick: () => post(`/api/metrics/${id}/variants`, { model_id: c.model_id, object_key: c.object_key, reason: reason.value }) }, "Accept as variant"),
+          h("button", { onclick: () => post(`/api/metrics/${id}`, { action: "define", model_id: c.model_id, object_key: c.object_key }) }, "Make this copy the definition")))));
+    }
+    if (c.status === "variant" && c.variant) extra.push(h("div", { class: "small muted" }, `Accepted by ${c.variant.created_by || "someone"}: ${c.variant.reason}  `,
+      can("reviewer") ? h("button", { onclick: () => post(`/api/metrics/${id}/variants`, { model_id: c.model_id, object_key: c.object_key, remove: true }) }, "Withdraw") : null));
+    return h("div", { class: "change" },
+      h("div", { class: "change-head" }, copyBadge(c.status), h("a", { href: `#/object/${c.id}` }, h("b", {}, c.name)),
+        h("span", { class: "muted small" }, ` in ${c.model_name}${c.table_name ? ` · ${c.table_name}` : ""}`), h("span", { class: "grow" }),
+        c.usage_status ? badge(c.usage_status) : null),
+      extra);
+  };
+  show(
+    h("div", { class: "crumbs" }, h("a", { href: "#/metrics" }, "Metrics"), " › ", m.name),
+    h("h1", {}, m.name, " ", metricBadge(m.status)),
+    h("p", { class: "sub" }, m.owner ? `Owner: ${m.owner}` : "No owner yet", m.aliases.length ? `  ·  also called ${m.aliases.join(", ")}` : "",
+      m.certified_at ? `  ·  certified by ${m.certified_by || "someone"}, ${fmtDate(m.certified_at)}` : ""),
+    h("div", { class: "grid2" },
+      h("div", {},
+        m.definition ? h("div", { class: "panel" }, h("b", {}, "What it means"), h("p", {}, m.definition)) : h("div", { class: "notice" }, "No business definition yet: say what it means, in words a report reader understands."),
+        src.state === "changed" ? h("div", { class: "notice bad" }, h("b", {}, "The defining measure changed since it was certified"),
+          h("p", { class: "small" }, `In ${m.model_name}, the measure now says something else. Re-certify to make the new DAX the agreed one, or put it back. Until then it is a finding in that model.`),
+          diffBlock(lineDiff(m.expression, src.expression)),
+          can("reviewer") ? h("div", { class: "buttons" }, act("certify", "Re-certify with the new DAX", "good")) : null) : null,
+        src.state === "gone" ? h("div", { class: "notice bad" }, h("b", {}, "The defining measure is no longer in its model"),
+          h("p", { class: "small" }, "Make one of the copies below the definition, or deprecate the metric.")) : null,
+        h("h2", {}, m.status === "certified" ? "Agreed DAX" : "DAX (agreed once certified)"),
+        h("pre", {}, m.expression || "(empty)"),
+        h("div", { class: "muted small" }, m.model_name ? ["Defined by the measure in ", h("a", { href: `#/model/${m.model_id}` }, m.model_name)] : ""),
+        h("h2", {}, `Every copy (${m.copies.length})`),
+        m.copies.length ? m.copies.map(copyRow) : h("p", { class: "muted" }, "No measure with this name in the current versions.")),
+      h("div", {},
+        h("h2", {}, "Decide"),
+        h("div", { class: "panel form" },
+          h("label", {}, "Your name", by), h("label", {}, "Note", note),
+          h("div", { class: "buttons" },
+            m.status === "draft" && can("reviewer") ? act("certify", "Certify", "good") : null,
+            m.status !== "deprecated" && can("reviewer") ? act("deprecate", "Deprecate", "bad") : null,
+            m.status === "deprecated" && can("reviewer") ? act("certify", "Certify again", "good") : null,
+            m.status === "draft" ? act("delete", "Delete draft") : null),
+          m.status === "draft" && !can("reviewer") ? h("div", { class: "muted small" }, "A reviewer certifies it.") : null,
+          say),
+        h("h2", {}, "Edit"),
+        h("div", { class: "panel form" },
+          h("label", {}, "Name", name), h("label", {}, "Also called", aliases), h("label", {}, "What it means", definition), h("label", {}, "Owner", owner),
+          h("div", {}, h("button", { class: "primary", disabled: m.status !== "draft" && !can("reviewer"),
+            onclick: () => post(`/api/metrics/${id}`, { action: "update", name: name.value, aliases: aliases.value, definition: definition.value, owner: owner.value }) }, "Save")),
+          m.status !== "draft" ? h("div", { class: "muted small" }, "A certified metric is edited by a reviewer.") : null))),
+  );
+  if (m.status === "deleted") location.hash = "#/metrics";
+}
+
+function metricPanel(o) {
+  if (o.kind !== "measure" || !o.in_model || !o.is_current) return null;
+  const mt = o.metric;
+  if (mt) {
+    return [h("h2", {}, "Metric"),
+      h("div", { class: "panel" },
+        h("div", {}, h("a", { href: `#/metric/${mt.id}` }, h("b", {}, mt.name)), "  ", metricBadge(mt.status), "  ", copyBadge(mt.copy)),
+        mt.owner ? h("div", { class: "small muted" }, `Owner: ${mt.owner}`) : null,
+        mt.definition ? h("p", { class: "small" }, mt.definition) : null,
+        mt.copy === "drift" ? [h("div", { class: "small err" }, "This copy differs from the agreed DAX:"), diffBlock(lineDiff(mt.expression, o.expression))] : null,
+        mt.variant ? h("div", { class: "small muted" }, `Accepted variant: ${mt.variant.reason}`) : null)];
+  }
+  const definition = h("textarea", { placeholder: "What it means, in words a report reader understands" });
+  const owner = h("input", { placeholder: "who decides what it means" });
+  const say = h("span", { class: "small" });
+  return [h("h2", {}, "Metric"),
+    h("details", { class: "panel" }, h("summary", {}, "Make it an agreed metric"),
+      h("div", { class: "form" },
+        h("p", { class: "small muted" }, "Its DAX becomes the definition other files are checked against, once a reviewer certifies it."),
+        h("label", {}, "What it means", definition), h("label", {}, "Owner", owner),
+        h("div", {}, h("button", { class: "primary", onclick: async () => {
+          try {
+            const made = await api("/api/metrics", { model_id: o.model_id, object_key: o.object_key, definition: definition.value, owner: owner.value, by: me() });
+            location.hash = `#/metric/${made.id}`;
+          } catch (err) { say.className = "err small"; say.textContent = err.message; }
+        } }, "Make metric")), say))];
+}
+
 // -- routing ------------------------------------------------------------------
 
 async function route() {
@@ -1173,6 +1341,8 @@ async function route() {
     else if (path === "/review") await reviewQueueView(params);
     else if (path === "/standards") await standardsView(params);
     else if (path === "/changes") await changesView(params);
+    else if (path === "/metrics") await metricsView();
+    else if ((match = path.match(/^\/metric\/(\d+)$/))) await metricView(match[1]);
     else if (path === "/account") await accountView();
     else if (path === "/admin") await adminView(params);
     else if ((match = path.match(/^\/change\/(\d+)$/))) await changeView(match[1]);

@@ -18,7 +18,7 @@ from pathlib import Path
 from .store import SCHEMA_VERSION, Store
 
 # parents before children, so foreign keys hold while restoring
-TABLES = ["meta", "folder", "model", "model_version", "object", "dependency", "visual", "usage", "annotation",
+TABLES = ["meta", "folder", "model", "metric", "metric_variant", "model_version", "object", "dependency", "visual", "usage", "annotation",
           "review", "comment", "rule_setting", "rule_exception", "version_check", "finding", "change_request",
           "change_op", "change_event", "account", "api_token", "audit", "scan_run"]
 FORMAT = "daxlin-workspace-backup"
@@ -100,7 +100,7 @@ def restore(store: Store, source, force: bool = False) -> dict:
             if store.kind == "postgres":  # carry on numbering after the restored ids
                 for name in TABLES:
                     if name in ("folder", "model", "model_version", "object", "comment", "scan_run", "change_request",
-                                "change_event", "account", "audit"):
+                                "change_event", "account", "audit", "metric"):
                         con.execute(f"SELECT setval(pg_get_serial_sequence('{name}', 'id'), "
                                     f"COALESCE((SELECT MAX(id) FROM {name}), 0) + 1, false)")
     return counts

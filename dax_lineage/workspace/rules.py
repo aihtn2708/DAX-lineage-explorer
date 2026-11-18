@@ -54,8 +54,9 @@ def _tokens(text: str) -> list:
 class Context:
     """One version, shaped for the rules."""
 
-    def __init__(self, rows: dict, has_report: bool):
+    def __init__(self, rows: dict, has_report: bool, metrics=None):
         self.has_report = has_report
+        self.metrics = metrics or []
         self.objects = [o for o in rows["objects"] if o["in_model"]]
         self.missing = [o for o in rows["objects"] if not o["in_model"]]
         self.measures = [o for o in self.objects if o["kind"] == "measure"]
@@ -193,10 +194,37 @@ def _depth(ctx, params):
                                for o in ctx.measures if o.get("depth", 0) > most]
 
 
+def _metric_drift(ctx, params):
+    from .changes import meaning
+    items, found = [], []
+    for o in ctx.measures:
+        key = " ".join(o["name"].split()).casefold()
+        metric = next((m for m in ctx.metrics if m["defines"] == o["object_key"]), None) or \
+            next((m for m in ctx.metrics if key in m["names"]), None)
+        if metric is None:
+            continue
+        items.append(o)
+        same = meaning(o["expression"]) == metric["meaning"]
+        if metric["status"] == "deprecated":
+            found.append((o, f"{metric['name']} is a deprecated metric: stop using it, or ask {metric['owner'] or 'its owner'} "
+                             f"what replaces it"))
+        elif metric["defines"] == o["object_key"]:
+            if not same:
+                found.append((o, f"defines the certified metric {metric['name']}, and its DAX changed since it was "
+                                 f"certified: {metric['owner'] or 'the owner'} re-certifies it, or it goes back"))
+        elif not same and o["object_key"] not in metric["variants"]:
+            found.append((o, f"differs from the certified {metric['name']} (owner {metric['owner'] or 'none'}): "
+                             f"use the agreed DAX, or have a reviewer accept this as a variant"))
+    return len(items), found
+
+
 RULES = [
     Rule("broken-reference", "Nothing uses a field the model does not have",
          "A measure or visual that reads a removed or renamed field shows an error to every reader.",
          "error", _broken),
+    Rule("metric-drift", "Copies of a certified metric match its agreed DAX",
+         "Measures named like a certified metric must say the same thing in every file, unless a reviewer "
+         "accepted the difference.", "warning", _metric_drift),
     Rule("measure-error", "Every measure is in the Ready state",
          "A measure in the Error state breaks every visual that shows it.", "error", _state),
     Rule("unused-measure", "Every measure is used",
@@ -232,9 +260,9 @@ RULES = [
 BY_ID = {r.id: r for r in RULES}
 
 
-def run(rules: list, rows: dict, has_report: bool) -> list:
+def run(rules: list, rows: dict, has_report: bool, metrics=None) -> list:
     """[(rule dict, applicable, [(object, message)])] for each enabled rule."""
-    ctx = Context(rows, has_report)
+    ctx = Context(rows, has_report, metrics)
     out = []
     for rule in rules:
         if not rule["enabled"] or (BY_ID[rule["id"]].needs_report and not has_report):

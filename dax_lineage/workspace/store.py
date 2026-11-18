@@ -20,7 +20,7 @@ from typing import Iterable, Optional
 
 from .db import mask, open_database
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DECISIONS = ("", "keep", "remove")
 REVIEW_STATES = ("pending", "approved", "changes_requested")
 
@@ -266,6 +266,34 @@ CREATE TABLE IF NOT EXISTS audit (
     address  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_at_idx ON audit (at);
+CREATE TABLE IF NOT EXISTS metric (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    name_key      TEXT NOT NULL UNIQUE,
+    aliases       TEXT NOT NULL DEFAULT '[]',
+    definition    TEXT NOT NULL DEFAULT '',
+    owner         TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'draft',
+    model_id      INTEGER REFERENCES model(id),
+    object_key    TEXT NOT NULL DEFAULT '',
+    expression    TEXT NOT NULL DEFAULT '',
+    format_string TEXT NOT NULL DEFAULT '',
+    note          TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    certified_by  TEXT NOT NULL DEFAULT '',
+    certified_at  TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS metric_variant (
+    metric_id  INTEGER NOT NULL REFERENCES metric(id),
+    model_id   INTEGER NOT NULL REFERENCES model(id),
+    object_key TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (metric_id, model_id, object_key)
+);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
