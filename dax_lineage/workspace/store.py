@@ -20,7 +20,7 @@ from typing import Iterable, Optional
 
 from .db import mask, open_database
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DECISIONS = ("", "keep", "remove")
 REVIEW_STATES = ("pending", "approved", "changes_requested")
 
@@ -294,6 +294,18 @@ CREATE TABLE IF NOT EXISTS metric_variant (
     created_at TEXT NOT NULL,
     PRIMARY KEY (metric_id, model_id, object_key)
 );
+CREATE TABLE IF NOT EXISTS model_policy (
+    model_id   INTEGER PRIMARY KEY REFERENCES model(id),
+    tier       TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tier_policy (
+    tier       TEXT PRIMARY KEY,
+    settings   TEXT NOT NULL DEFAULT '{}',
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
@@ -501,9 +513,10 @@ class Store:
                 "v.scanned_at, v.measures, v.columns, v.tables, v.visuals, v.pages, v.unused_measures, "
                 "v.unused_columns, v.broken_refs, v.has_report, c.score, c.errors AS rule_errors, "
                 "c.warnings AS rule_warnings, c.infos AS rule_infos, "
-                "(SELECT COUNT(*) FROM model_version x WHERE x.model_id = m.id) AS versions "
+                "(SELECT COUNT(*) FROM model_version x WHERE x.model_id = m.id) AS versions, "
+                "COALESCE(p.tier, 'team') AS tier "
                 "FROM model m LEFT JOIN model_version v ON v.id = m.current_version_id "
-                "LEFT JOIN version_check c ON c.version_id = v.id "
+                "LEFT JOIN version_check c ON c.version_id = v.id LEFT JOIN model_policy p ON p.model_id = m.id "
                 "ORDER BY m.missing, fold(m.name)"))
 
     def model(self, model_id: int) -> Optional[dict]:
@@ -517,6 +530,9 @@ class Store:
                 "v.measures, v.columns, v.visuals, v.unused_measures, v.broken_refs, " + REVIEW_STATUS_SQL + " AS review "
                 "FROM model_version v LEFT JOIN review r ON r.version_id = v.id WHERE v.model_id = ? "
                 "ORDER BY v.number DESC", (model_id,)))
+            if model_id in self._exempt():
+                for h in model["history"]:
+                    h["review"] = "not_required" if h["review"] == "pending" else h["review"]
             model["objects"] = self._objects(con, model["version_id"], model_id) if model["version_id"] else []
             model["visual_list"] = _rows(con.execute(
                 "SELECT v.node, v.report, v.page, v.page_order, v.visual_type, v.title, "
@@ -669,7 +685,15 @@ class Store:
                 "COALESCE(r.reviewer, '') AS reviewer, COALESCE(r.decided_at, '') AS decided_at "
                 "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id "
                 "WHERE v.id = ?", (version_id,)).fetchone()
-            return dict(row) if row else None
+            found = dict(row) if row else None
+        if found and found["review"] == "pending" and found["model_id"] in self._exempt():
+            found["review"] = "not_required"
+        return found
+
+    def _exempt(self) -> set:
+        """Models whose tier needs no review of their saves (see policy.py)."""
+        from .policy import exempt_from_review
+        return exempt_from_review(self)
 
     def previous_version(self, version_id: int) -> Optional[dict]:
         """The latest earlier version of the same model that could be read."""
@@ -717,7 +741,11 @@ class Store:
                 "FROM model_version v JOIN model m ON m.id = v.model_id LEFT JOIN review r ON r.version_id = v.id) AS q "
                 "WHERE (? = 'all' AND review NOT IN ('baseline', 'unreadable')) OR review = ? "
                 "ORDER BY file_modified_at DESC, id DESC LIMIT ?", (status, status, limit)))
-        return rows
+        exempt = self._exempt()
+        for r in rows:
+            if r["review"] == "pending" and r["model_id"] in exempt:
+                r["review"] = "not_required"
+        return [r for r in rows if status != "pending" or r["review"] == "pending"]
 
     def set_review(self, version_id: int, status: str, by: str = "", note: str = "") -> dict:
         if status not in REVIEW_STATES:

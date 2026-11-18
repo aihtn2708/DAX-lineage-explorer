@@ -126,6 +126,10 @@ def main(argv=None) -> int:
     p.add_argument("--force", action="store_true", help="replace what this workspace holds")
     p = sub.add_parser("metrics", help="the metric glossary: each metric's copies and drift, or candidates")
     p.add_argument("action", nargs="?", default="list", choices=["list", "drift", "candidates"])
+    p = sub.add_parser("policies", help="each tier's policy, and the models that do not keep to theirs")
+    p = sub.add_parser("tier", help="put a model in a tier: personal, team or certified")
+    p.add_argument("model", help="the model's name or id (see `models`)")
+    p.add_argument("tier", choices=["personal", "team", "certified"])
     p = sub.add_parser("review", help="versions waiting for review (or --all)")
     p.add_argument("--all", action="store_true", help="every reviewable version, with its state")
     args = parser.parse_args(argv)
@@ -203,6 +207,35 @@ def main(argv=None) -> int:
                     for m in data["metrics"]]
             print(_table(rows, ["metric", "status", "owner", "defined in", "same", "variants", "drift"])
                   or "no metrics yet: make one from a measure's page, or see `metrics candidates`")
+    elif args.command == "policies":
+        from . import policy as P
+        data = P.overview(store)
+        for tier in P.TIERS:
+            t = data["tiers"][tier]
+            parts = ["every save reviewed" if t["require_review"] else "no review needed"]
+            if t["no_new_errors"]:
+                parts.append("no new errors")
+            if t["max_score_drop"] is not None:
+                parts.append(f"score drop at most {t['max_score_drop']}")
+            if t["min_score"] is not None:
+                parts.append(f"score at least {t['min_score']}")
+            if t["rules"]:
+                parts.append("stricter rules: " + ", ".join(f"{k} {v.get('severity') or ('on' if v.get('enabled') else 'off')}"
+                                                            for k, v in t["rules"].items()))
+            print(f"{tier:<10} {'; '.join(parts)}")
+        rows = [(m["name"], m["tier"], "" if m["score"] is None else m["score"], "; ".join(m["problems"])[:110])
+                for m in data["models"] if not m["ok"]]
+        print()
+        print(_table(rows, ["model", "tier", "score", "out of policy because"]) or "every model keeps to its tier's policy")
+    elif args.command == "tier":
+        from .policy import set_tier
+        wanted = args.model.strip()
+        found = [m for m in store.models() if str(m["id"]) == wanted or m["name"].casefold() == wanted.casefold()]
+        if len(found) != 1:
+            raise SystemExit(f"no model called {wanted!r}" if not found else f"{wanted!r} matches more than one model; give its id")
+        set_tier(store, found[0]["id"], args.tier, "command line")
+        _audit(store, "models.tier", found[0]["name"], {"tier": args.tier})
+        print(f"{found[0]['name']} is now {args.tier}")
     elif args.command == "users":
         return _users(store, args)
     elif args.command == "tokens":

@@ -211,3 +211,21 @@ a.graph-link::before { content: ""; width: 14px; height: 10px; border: 2px solid
 .badge.copy-drift { border-color: var(--critical); color: var(--critical); }
 .badge.copy-drift::before { background: var(--critical); }
 a.chip { color: inherit; }
+
+/* governance G3: policies */
+.badge.not_required::before { background: var(--axis); }
+.badge.tier-personal::before { background: var(--axis); }
+.badge.tier-team::before { background: var(--accent); }
+.badge.tier-certified { border-color: var(--good); color: var(--good); }
+.badge.tier-certified::before { background: var(--good); }
+.panel.policy.bad { border-color: var(--critical); }
+.panel.policy .checks li { display: grid; grid-template-columns: 1.4em 1fr; column-gap: 4px; margin: 6px 0; }
+.panel.policy .checks li > div { grid-column: 2; }
+.panel.policy .checks .pass .mark { color: var(--good); font-weight: 700; }
+.panel.policy .checks .fail .mark { color: var(--critical); font-weight: 700; }
+.panel.policy .override { margin-top: 8px; }
+table.matrix { border-collapse: collapse; width: 100%; margin: 6px 0; }
+table.matrix th, table.matrix td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid, #e5e5e5); vertical-align: top; }
+table.matrix th .why { font-weight: 400; max-width: 26ch; }
+table.matrix select.changed { font-weight: 600; }
+table.matrix input.param { width: 6em; }

@@ -144,6 +144,32 @@ daxlin workspace metrics candidates    # measures copied across files, not yet m
 
 ![A certified metric: its agreed DAX, and a copy that drifted in another file](docs/assets/workspace-metric.png)
 
+### Policies: how strict to be depends on the model
+
+Not every file deserves the same care. Each model sits in a **tier**, set by an admin on the model's
+page or under **Standards › Policies**:
+
+| Tier | For | What it asks of each save |
+|---|---|---|
+| personal | someone's own analysis | checked and scored; no review needed |
+| team (the default) | the team's reports | reviewed; may not add errors; the score may fall by at most 10 |
+| certified | models people rely on | as team, a fall of at most 5, a score of at least 80, and stricter rules: missing descriptions, format strings and metric drift are errors |
+
+- Every number and switch can be changed per tier, and any rule can be made stricter, looser or
+  turned off for one tier. A model is checked again as soon as its tier or its tier's rules change.
+- A review page shows the save against its tier's policy, check by check. **A save that breaks it
+  cannot be approved.** An admin can still approve it with a written reason, which stays with the
+  review and in the audit log.
+- Saves of personal models never wait in Review.
+- **Out of policy** lists every model whose current version breaks its tier's policy.
+
+```bash
+daxlin workspace policies                 # what each tier asks, and the models out of policy
+daxlin workspace tier "Sales" certified   # put a model in a tier
+```
+
+![Policies: what each tier asks, and the models out of policy](docs/assets/workspace-policies.png)
+
 ### Reviewing each other's changes
 
 Every saved version after the first waits in **Review**. Opening one shows what changed since the
