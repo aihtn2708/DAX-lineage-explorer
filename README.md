@@ -35,9 +35,8 @@ file to file, and nobody had Fabric capacity, Git or a release pipeline. In that
   that a measure reads three others and sits on four visuals, and that is the thing you need before a
   rename. The first piece of this repository is the lineage explorer: it builds that graph from the
   output of `INFO.MEASURES()` and the report file, entirely in the browser.
-- **Version control assumed a different way of working.** Git integration needs PBIP projects and a
-  Fabric capacity. Even then, a text diff of TMDL shows changed lines, not that a measure was renamed or
-  that two visuals now point at a field that no longer exists.
+- **Version control assumed a different way of working**: PBIP projects, Git, and Premium or Fabric
+  capacity. [What stood in the way](#what-stood-in-the-way-of-pbip-git-and-fabric) is below.
 - **The same metric existed in five versions.** With self-contained files, "Total Sales" is copied
   everywhere and slowly drifts. Central metric definitions live in the Power BI service, not in the
   files people actually edit.
@@ -68,6 +67,63 @@ It works best **alongside** the tools above, not instead of them:
 
 Teams that later move to PBIP, Git and Fabric can keep the same habits of review, standards and
 agreed metrics. The workspace was built so those habits could start before any of that was in place.
+
+### What stood in the way of PBIP, Git and Fabric
+
+Microsoft's answer to team development is sound: save as a Power BI Project (PBIP), keep it in Git,
+review changes in pull requests, and deploy with Fabric. For a team of report builders on `.pbix`
+files, each step had a real cost.
+
+**The PBIP format**
+
+- *A file becomes a folder.* A PBIP project is a folder of many text files: TMDL for the model and
+  PBIR JSON for the report. People who share one `.pbix` by email, Teams or a SharePoint link now have
+  a project folder to keep together, and OneDrive syncing many small files invites sync conflicts.
+- *No data in the project.* The data cache is normally left out of version control, so a fresh copy
+  has to be refreshed against the sources before anyone can see numbers. That means every reviewer
+  needs access to the data sources and their credentials.
+- *Format changes are one-way.* PBIP only became generally available in 2026, and the enhanced
+  report format went through a long preview. Microsoft warned that upgrading a project to PBIR cannot
+  be undone. A team that just wants its reports to keep working has little reason to go first.
+
+**Git itself**
+
+- *New concepts for non-developers.* Branches, commits, pull, push, pull requests and rebases are
+  everyday words for software developers. Most report builders never use them, and Power BI Desktop
+  has no Git tools of its own, so a separate client and training come first.
+- *Merge conflicts.* Two people adding one measure each on separate branches can still conflict. The
+  older single-file `model.bim` was notorious for this, and even with TMDL and PBIR someone has to read
+  and resolve the conflicting files by hand. The person who hits it is usually the one least able to
+  fix it.
+- *Diffs show text, not meaning.* A rename shows up as dozens of changed lines across the model and
+  report files. A visual pointing at a field that no longer exists shows up as nothing at all, because
+  the broken reference is in a file nobody changed.
+- *Binary `.pbix` files gain nothing.* Committing them to Git keeps copies, but Git cannot compare or
+  merge them, so there is no review.
+
+**Licences and capacity**
+
+- *Git integration in the service needs capacity.* Connecting a workspace to Git needs a workspace on
+  Power BI Premium (P SKU) or Fabric (F SKU) capacity. Pro workspaces can't do it, and Premium Per
+  User has been reported as not enough. Deployment pipelines and metric sets have similar
+  requirements.
+- *Capacity is an organisation-level purchase.* It is bought and run centrally, and it is hard to
+  justify for a small team whose only goal is to stop overwriting each other's measures. Local Git
+  with PBIP needs no licence, but it still needs everything above.
+
+**What the workspace does instead**
+
+The workspace starts where the team already is: `.pbix` files in a synced folder, Power BI Desktop,
+and a browser.
+
+- Saving the file is the commit.
+- The scan keeps the version.
+- The review page is the pull request, and it shows changes in Power BI terms: renamed, DAX changed,
+  visual broken.
+- Approval follows the model's tier. Approved edits are applied through Desktop by the companion,
+  instead of being merged by hand.
+- It needs no Premium or Fabric capacity, and no Git knowledge.
+- If the team moves to PBIP and Git later, the habits stay the same.
 
 ## Run it locally
 
