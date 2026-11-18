@@ -55,15 +55,33 @@ folder, and it reads every model each night into a database on your own machine.
 find a measure across all models, see which visuals use it, and leave notes, owners and keep/remove
 decisions that stay attached to the measure through renames and new versions.
 
-```bash
-daxlin workspace add-folder "C:/Users/me/Contoso/BI - Reports"   # the synced SharePoint library
-daxlin workspace scan                                            # reads every changed .pbix / .pbit
-daxlin workspace serve                                           # http://127.0.0.1:8766
+#### Quick start on your PC (Windows, 2 minutes)
+
+1. Install [Python 3.9 or later](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. Download this repository (**Code → Download ZIP**) and unzip it.
+3. **Double-click `run-workspace.bat`.** A black window opens (leave it open: it is the workspace)
+   and your browser shows http://127.0.0.1:8766.
+4. On the page, under **Start here**, click **Browse…** and choose the folder that holds your `.pbix`
+   files, for example the SharePoint library OneDrive syncs to your PC. Or paste its path (in File
+   Explorer, click the address bar and copy it). Click **Add and scan**.
+5. The models appear. Click **Scan now** after you save new versions; to stop, close the black window.
+
+Subfolders are read too, and files are only read, never changed. Everything stays on your PC, in
+`pbi-workspace.db` next to `run-workspace.bat`.
+
+**Nothing found?** The scan reads `.pbix` and `.pbit` files (not `.pbip` folders yet). Files that
+OneDrive keeps only online are downloaded as they are read: if one fails, right-click the folder in
+File Explorer → **Always keep on this device**, then **Scan now** again.
+
+The same from a terminal, for scheduled scans or scripts (`./run-workspace.sh` on macOS and Linux):
+
+```bat
+run-workspace.bat add-folder "C:\Users\me\OneDrive - Contoso\BI - Reports"
+run-workspace.bat scan
+run-workspace.bat                 &REM no arguments: open the page
 ```
 
-Without installing, from the repository folder: `run-workspace.bat add-folder "PATH"`, then
-`run-workspace.bat scan`, then double-click `run-workspace.bat` to open it (`./run-workspace.sh` on macOS
-and Linux). The database is `pbi-workspace.db` next to it.
+Editing `run-workspace.bat` itself does nothing for the folder: its `rem` lines are comments.
 
 ![The workspace: four models, their unused measures and owners](docs/assets/workspace-models.png)
 
@@ -82,6 +100,49 @@ SHA-256 differs, so OneDrive does not download files that are only online. Measu
 matched across versions by their Power BI **LineageTag**, which survives renames, so a note made on
 `Total Sales` is still there after it becomes `Net Sales`. A file that fails to read is recorded with
 the reason and does not stop the scan; a file that disappears is kept, marked *file not found*.
+
+### The lineage graph, inside the workspace
+
+Every model, measure, review and change opens in the lineage explorer, drawn from what the scan
+stored (the .pbix is not read again), for any version:
+
+- **A model or a measure**: *Open the lineage graph* / *Show it in the lineage graph*, centred on it.
+- **A review**: *See the changes in the lineage graph* marks what the save changed: new, edited,
+  renamed, broken, and DAX that only follows a rename. The graph opens on those and everything
+  they affect; untick *Changes and what they affect* for the whole model.
+- **A change request**: *See what it touches* marks the objects it will change and the DAX that
+  follows them.
+
+![A review in the lineage graph: a rename, an edit, a new measure and a broken reference](docs/assets/workspace-lineage-review.png)
+
+The page is the same offline explorer: it makes no request at all, not even to the workspace.
+
+### Metrics: one agreed definition, checked in every file
+
+Self-contained .pbix files copy their key measures from file to file, and the copies drift.
+**Metrics** pins the agreed version:
+
+- **Copied across files** lists every measure name found in two or more models, with how many
+  different DAX versions exist: where to start.
+- On the right copy's page, **Make it an agreed metric**: a business definition and an owner. A
+  reviewer **certifies** it, and its DAX becomes the agreed DAX.
+- Every measure with the metric's name (or one of its *also called* names) in every model is then
+  shown as *defines it*, *same DAX*, *accepted variant* (a reviewer said why), or **drift**, with the
+  difference. Spacing, capitals and comments do not count as differences.
+- Drift is a finding of the standards rule *Copies of a certified metric match its agreed DAX*, so it
+  lowers that model's score and lands with its owner. So does a copy of a **deprecated** metric, and a
+  defining measure whose DAX changed after certification, until a reviewer **re-certifies** it.
+- A change request that edits the measure defining a certified metric is approved by the metric's
+  owner or an admin; removing that measure is refused until the metric points elsewhere. A review of
+  a save that changes it says so.
+
+```bash
+daxlin workspace metrics               # the glossary, with same / variants / drift counts
+daxlin workspace metrics drift         # every drifting copy, and whose metric it is
+daxlin workspace metrics candidates    # measures copied across files, not yet metrics
+```
+
+![A certified metric: its agreed DAX, and a copy that drifted in another file](docs/assets/workspace-metric.png)
 
 ### Reviewing each other's changes
 
@@ -468,7 +529,7 @@ and the tests check that all four give the same answer.
 ## Development
 
 ```bash
-python3 -m pytest tests -q                  # 135 Python tests
+python3 -m pytest tests -q                  # 153 Python tests
 DAXLIN_TEST_POSTGRES=postgresql://postgres@localhost/ws_test python3 -m pytest tests -q   # the same on Postgres
 npm install && npm test                     # JS parity with Python, the .xlsx, report and .pbix readers
 DAX_LINEAGE_PBIX=path/to/file.pbix npm test # also check a real .pbix

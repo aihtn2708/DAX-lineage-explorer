@@ -20,7 +20,7 @@ from typing import Iterable, Optional
 
 from .db import mask, open_database
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DECISIONS = ("", "keep", "remove")
 REVIEW_STATES = ("pending", "approved", "changes_requested")
 
@@ -266,6 +266,34 @@ CREATE TABLE IF NOT EXISTS audit (
     address  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_at_idx ON audit (at);
+CREATE TABLE IF NOT EXISTS metric (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    name_key      TEXT NOT NULL UNIQUE,
+    aliases       TEXT NOT NULL DEFAULT '[]',
+    definition    TEXT NOT NULL DEFAULT '',
+    owner         TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'draft',
+    model_id      INTEGER REFERENCES model(id),
+    object_key    TEXT NOT NULL DEFAULT '',
+    expression    TEXT NOT NULL DEFAULT '',
+    format_string TEXT NOT NULL DEFAULT '',
+    note          TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    certified_by  TEXT NOT NULL DEFAULT '',
+    certified_at  TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS metric_variant (
+    metric_id  INTEGER NOT NULL REFERENCES metric(id),
+    model_id   INTEGER NOT NULL REFERENCES model(id),
+    object_key TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (metric_id, model_id, object_key)
+);
 CREATE TABLE IF NOT EXISTS scan_run (
     id           INTEGER PRIMARY KEY,
     started_at   TEXT NOT NULL,
@@ -339,7 +367,12 @@ class Store:
 
     def folders(self) -> list:
         with self.connect() as con:
-            return _rows(con.execute("SELECT * FROM folder ORDER BY path"))
+            rows = _rows(con.execute(
+                "SELECT f.*, (SELECT COUNT(*) FROM model m WHERE m.folder_id = f.id AND m.missing = 0) AS models "
+                "FROM folder f ORDER BY f.path"))
+        for r in rows:
+            r["exists"] = Path(r["path"]).is_dir()
+        return rows
 
     # -- scanning ---------------------------------------------------------
 
@@ -657,14 +690,15 @@ class Store:
         with self.connect() as con:
             objects = _rows(con.execute(
                 "SELECT node, object_key, kind, table_name, name, expression, description, display_folder, "
-                "format_string, data_type, is_hidden, state, error_message, depth, in_model, usage_status, usage, id "
-                "FROM object WHERE version_id = ?", (version_id,)))
+                "format_string, data_type, is_hidden, is_calculated, state, error_message, depth, in_model, usage_status, "
+                "usage, id FROM object WHERE version_id = ? ORDER BY id", (version_id,)))
             for o in objects:
                 o["usage"] = json.loads(o["usage"]) if o["usage"] else None
             return {
                 "objects": objects,
                 "dependencies": _rows(con.execute(
-                    "SELECT source, target, kind FROM dependency WHERE version_id = ?", (version_id,))),
+                    "SELECT source, target, kind, via_variable FROM dependency WHERE version_id = ? "
+                    "ORDER BY source, target, kind", (version_id,))),
                 "visuals": _rows(con.execute(
                     "SELECT node, report, page, page_order, visual_type, title FROM visual WHERE version_id = ?",
                     (version_id,))),

@@ -145,7 +145,8 @@ def check_version(store: Store, version_id: int, rules: Optional[list] = None) -
         return None
     rules = rules or rule_set(store)
     rows = store.version_rows(version_id)
-    results = R.run(rules, rows, bool(version["has_report"]))
+    from .metrics import for_rules
+    results = R.run(rules, rows, bool(version["has_report"]), for_rules(store, version["model_id"]))
     with store.connect() as con:
         accepted = {(r["rule_id"], r["object_key"]) for r in con.execute(
             "SELECT rule_id, object_key FROM rule_exception WHERE model_id = ?", (version["model_id"],))}

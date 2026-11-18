@@ -29,6 +29,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
@@ -111,12 +112,16 @@ COOKIE = "pbiw_session"
 
 def required_role(path: str, body: dict) -> str:
     """The least role that may make this POST."""
-    if path == "/api/scan" or path.startswith("/api/admin/"):
+    if path == "/api/scan" or path.startswith("/api/admin/") or path.startswith("/api/folders"):
         return "admin"
     if path.startswith("/api/account/"):
         return "viewer"
     if re.fullmatch(r"/api/versions/\d+/review", path) or path.startswith("/api/rules/") or path == "/api/exceptions":
         return "reviewer"
+    if re.fullmatch(r"/api/metrics/\d+/variants", path):
+        return "reviewer"
+    if re.fullmatch(r"/api/metrics/\d+", path):
+        return "reviewer" if body.get("action") in ("certify", "deprecate", "define") else "author"
     if re.fullmatch(r"/api/changes/\d+/decision", path):
         return "author" if body.get("status") == "cancelled" else "reviewer"
     return "author"
@@ -128,6 +133,31 @@ def action_name(path: str) -> tuple:
     target = ",".join(p for p in parts if p.isdigit())
     words = [p for p in parts if not p.isdigit()]
     return ".".join(words) or "request", target
+
+
+PICKER = r"""
+import sys, tkinter
+from tkinter import filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+path = filedialog.askdirectory(title="Choose the folder with your Power BI files", mustexist=True)
+root.destroy()
+sys.stdout.write(path or "")
+"""
+
+
+def pick_folder() -> str:
+    """Open the system's folder dialog on this computer; '' if cancelled."""
+    import subprocess
+    try:
+        done = subprocess.run([sys.executable, "-c", PICKER], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError("the folder picker did not open: paste the path instead") from None
+    if done.returncode != 0:
+        raise ValueError("the folder picker could not open here (Python's tkinter is missing): paste the path instead")
+    path = done.stdout.strip()
+    return str(Path(path)) if path else ""
 
 
 class ApiError(Exception):
@@ -148,9 +178,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
 
         # -- plumbing -----------------------------------------------------
 
-        def _send(self, status: int, body: bytes, content_type: str, extra=()):
+        def _send(self, status: int, body: bytes, content_type: str, extra=(), policy=None):
             self.send_response(status)
-            for name, value in HEADERS.items():
+            for name, value in dict(HEADERS, **(policy or {})).items():
                 self.send_header(name, value)
             for name, value in extra:
                 self.send_header(name, value)
@@ -244,6 +274,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if parts.path in STATIC:
                 name, content_type = STATIC[parts.path]
                 return self._send(HTTPStatus.OK, _static(name), content_type)
+            match = re.fullmatch(r"/explorer/version/(\d+)", parts.path)
+            if match:
+                return self._explorer(int(match.group(1)), parse_qs(parts.query))
             if not parts.path.startswith("/api/"):
                 return self._send(HTTPStatus.NOT_FOUND, b"not found\n", "text/plain; charset=utf-8")
             self.who, self.signed = self._identify()
@@ -290,6 +323,33 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 action, target = action_name(path)
                 A.audit(store, self.who, action, target, body, self.client_address[0])
 
+        def _explorer(self, version_id: int, query: dict):
+            """The lineage explorer opened on a stored version, with what a review or change marks."""
+            from . import lineage
+            self.who, self.signed = self._identify()
+            if self.who is None:
+                return self._send(HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8", [("Location", "/#/signin")])
+            one = lambda name: (query.get(name) or [""])[0]
+            change = None
+            if one("change").isdigit():
+                change = change_requests.get(store, int(one("change")))
+                if change is None:
+                    return self._send(HTTPStatus.NOT_FOUND, b"no such change\n", "text/plain; charset=utf-8")
+                version_id = change["base_version_id"]
+            against = int(one("against")) if one("against").isdigit() else None
+            try:
+                page = lineage.page_for(store, version_id, one("focus"), against, change)
+            except (KeyError, ValueError) as err:
+                return self._send(HTTPStatus.BAD_REQUEST, f"{err}\n".encode(), "text/plain; charset=utf-8")
+            if page is None:
+                return self._send(HTTPStatus.NOT_FOUND, b"no such version\n", "text/plain; charset=utf-8")
+            self._send(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8", policy=lineage.page_headers())
+
+        def _can_browse(self) -> bool:
+            """A folder dialog opens on this computer's screen: only for someone sitting at it."""
+            return (auth.mode == "none" and self.client_address[0] in ("127.0.0.1", "::1")
+                    and self.server.server_address[0] in ("127.0.0.1", "::1", "localhost"))
+
         def _refuse_own_approval(self, path: str, body: dict) -> str:
             """Someone else approves a change, and only its author or a reviewer cancels it."""
             match = re.fullmatch(r"/api/changes/(\d+)/decision", path)
@@ -301,6 +361,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             mine = request["created_by"] in (self.who["username"], A.name_of(self.who))
             if body.get("status") == "approved" and mine and not auth.allow_self_approval:
                 return "you proposed this change: someone else must approve it"
+            if body.get("status") == "approved" and self.who["role"] != "admin":
+                from .metrics import certified_defined_by, is_owner
+                touched = certified_defined_by(store, request["model_id"], [op["object_key"] for op in request["ops"]])
+                others = [m for m in touched if not is_owner(m, self.who)]
+                if others:
+                    return (f"this changes the certified metric {others[0]['name']}: its owner "
+                            f"({others[0]['owner']}) or an admin approves it")
             if body.get("status") == "cancelled" and not mine and A.rank(self.who["role"]) < A.rank("reviewer"):
                 return "only its author or a reviewer can cancel a change"
             return ""
@@ -369,6 +436,8 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 return HTTPStatus.OK, store.decisions(one("decision", "remove"))
             if path == "/api/scan":
                 return HTTPStatus.OK, job.state()
+            if path == "/api/folders":
+                return HTTPStatus.OK, {"folders": store.folders(), "can_browse": self._can_browse()}
             if path == "/api/reviews":
                 status = one("status", "pending")
                 if status not in REVIEW_STATES + ("all",):
@@ -388,6 +457,16 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
             if path == "/api/account":
                 tokens = A.tokens(store, self.who["username"]) if self.signed else []
                 return HTTPStatus.OK, {"user": self.who, "tokens": tokens, "mode": auth.mode}
+            if path == "/api/metrics":
+                from .metrics import glossary
+                return HTTPStatus.OK, glossary(store)
+            match = re.fullmatch(r"/api/metrics/(\d+)", path)
+            if match:
+                from .metrics import detail
+                found = detail(store, int(match.group(1)))
+                if found is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                return HTTPStatus.OK, found
             if path == "/api/changes/ready":
                 return HTTPStatus.OK, {"changes": change_requests.ready(store)}
             if path == "/api/changes":
@@ -400,6 +479,13 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                 if found is None:
                     raise ApiError(HTTPStatus.NOT_FOUND, "not found")
                 return HTTPStatus.OK, found
+            match = re.fullmatch(r"/api/versions/(\d+)/lineage", path)
+            if match:
+                from .lineage import graph_for_version
+                found = graph_for_version(store, int(match.group(1)))
+                if found is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+                return HTTPStatus.OK, found
             if path == "/api/rules/export":
                 return HTTPStatus.OK, standards_check.export_rules(store)
             match = re.fullmatch(r"/api/versions/(\d+)", path)
@@ -409,6 +495,11 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "against must be a version id")
                 review = compare(store, int(match.group(1)), int(against) if against else None)
                 review["comments"] = store.comments(int(match.group(1)))
+                from .metrics import certified_defined_by
+                changed = [i["key"] for part in ("edited", "renamed", "removed") for i in review.get(part, [])
+                           if not i.get("follows_rename")]
+                review["metrics"] = [{"id": m["id"], "name": m["name"], "owner": m["owner"]} for m in
+                                     certified_defined_by(store, review["version"]["model_id"], changed)]
                 review["standards"] = standards_check.compare_checks(
                     store, int(match.group(1)), review["against"]["id"] if review["against"] else None)
                 review["versions"] = store.versions_of(review["version"]["model_id"])
@@ -422,6 +513,9 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     found["check"] = standards_check.version_check(store, found["version_id"]) \
                         if found["version_id"] else None
                 else:
+                    if found["kind"] == "measure" and found["in_model"]:
+                        from .metrics import for_object
+                        found["metric"] = for_object(store, found["model_id"], found["object_key"], found["name"])
                     titles = {r["id"]: r["title"] for r in standards_check.rule_set(store)}
                     found["findings"] = [dict(f, title=titles.get(f["rule_id"], f["rule_id"])) for f in
                                          standards_check.findings_for(store, found["version_id"], found["object_key"])]
@@ -465,6 +559,43 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     return HTTPStatus.OK, {"token": A.create_token(store, self.who["username"], str(body.get("name", "")))}
                 if path == "/api/account/tokens/revoke":
                     return HTTPStatus.OK, {"revoked": A.revoke_token(store, str(body.get("prefix", "")), self.who["username"])}
+            if path == "/api/metrics":
+                from . import metrics as M
+                body = self._body()
+                return HTTPStatus.OK, M.create(store, int(body["model_id"]), str(body["object_key"]),
+                                               str(body.get("name", "")), str(body.get("definition", "")),
+                                               str(body.get("owner", "")), body.get("aliases"), str(body.get("by", "")))
+            match = re.fullmatch(r"/api/metrics/(\d+)(/variants)?", path)
+            if match:
+                from . import metrics as M
+                body, metric_id = self._body(), int(match.group(1))
+                metric = M.get(store, metric_id)
+                if metric is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "no such metric")
+                if match.group(2):
+                    if body.get("remove"):
+                        return HTTPStatus.OK, {"removed": M.withdraw_variant(store, metric_id, int(body["model_id"]),
+                                                                             str(body["object_key"]))}
+                    M.accept_variant(store, metric_id, int(body["model_id"]), str(body["object_key"]),
+                                     str(body.get("reason", "")), str(body.get("by", "")))
+                    return HTTPStatus.OK, {"ok": True}
+                action = body.get("action")
+                if action in ("update", "delete") and metric["status"] != "draft" and \
+                        A.rank(self.who["role"]) < A.rank("reviewer"):
+                    raise ApiError(HTTPStatus.FORBIDDEN, "a certified or deprecated metric is changed by a reviewer")
+                if action == "update":
+                    return HTTPStatus.OK, M.update(store, metric_id, body.get("name"), body.get("definition"),
+                                                   body.get("owner"), body.get("aliases"))
+                if action == "certify":
+                    return HTTPStatus.OK, M.certify(store, metric_id, str(body.get("by", "")), str(body.get("note", "")))
+                if action == "deprecate":
+                    return HTTPStatus.OK, M.deprecate(store, metric_id, str(body.get("by", "")), str(body.get("note", "")))
+                if action == "define":
+                    return HTTPStatus.OK, M.define_by(store, metric_id, int(body["model_id"]), str(body["object_key"]))
+                if action == "delete":
+                    M.delete(store, metric_id)
+                    return HTTPStatus.OK, {"deleted": True}
+                raise ApiError(HTTPStatus.BAD_REQUEST, "action must be update, certify, deprecate, define or delete")
             if path in ("/api/changes", "/api/changes/preview"):
                 body = self._body()
                 items = body.get("items")
@@ -490,6 +621,26 @@ def make_handler(store: Store, allowed_hosts: set, read_only: bool, quiet: bool,
                     raise ApiError(HTTPStatus.BAD_REQUEST, "results must be a list")
                 return HTTPStatus.OK, change_requests.applied(store, request_id, results, str(body.get("by", "")),
                                                               str(body.get("machine", "")))
+            if path == "/api/folders":
+                folder = str(self._body().get("path", "")).strip().strip('"')
+                if not folder:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "paste the folder's path first")
+                if not Path(folder).expanduser().is_dir():
+                    raise ApiError(HTTPStatus.BAD_REQUEST, f"no folder at {folder}: copy the path from File Explorer's "
+                                                           "address bar")
+                store.add_folder(folder)
+                started = job.start() if self._body().get("scan") else False
+                return HTTPStatus.OK, {"folders": store.folders(), "scanning": started}
+            if path == "/api/folders/remove":
+                if not store.remove_folder(str(self._body().get("path", ""))):
+                    raise ApiError(HTTPStatus.NOT_FOUND, "that folder is not registered")
+                return HTTPStatus.OK, {"folders": store.folders()}
+            if path == "/api/folders/browse":
+                self._body()
+                if not self._can_browse():
+                    raise ApiError(HTTPStatus.FORBIDDEN, "the folder picker opens on the computer running the workspace, "
+                                                         "so it works only there: paste the path instead")
+                return HTTPStatus.OK, {"path": pick_folder()}
             if path == "/api/rules/reset":
                 self._body()
                 standards_check.reset_rules(store)

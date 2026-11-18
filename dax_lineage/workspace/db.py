@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 ID_TABLES = {"folder", "model", "model_version", "object", "comment", "scan_run", "change_request", "change_event",
-             "account", "audit"}
+             "account", "audit", "metric"}
 
 
 def is_postgres(location) -> bool:

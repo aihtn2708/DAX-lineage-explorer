@@ -194,3 +194,20 @@ td select { padding: 3px 6px; font-size: 12px; }
 .signin h1 { margin-bottom: 16px; }
 .role { font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
 .token { font-family: var(--mono); font-size: 13px; padding: 10px; background: var(--plane); border: 1px dashed var(--axis); border-radius: 8px; overflow-wrap: anywhere; }
+
+/* governance G1: links into the lineage graph */
+a.graph-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+a.graph-link::before { content: ""; width: 14px; height: 10px; border: 2px solid currentColor; border-radius: 3px; box-shadow: 6px 5px 0 -2px var(--plane), 6px 5px 0 0 currentColor; }
+
+/* governance G2: metrics */
+.badge.metric-certified { border-color: var(--good); color: var(--good); }
+.badge.metric-certified::before { background: var(--good); }
+.badge.metric-draft::before { background: var(--warning); }
+.badge.metric-deprecated::before { background: var(--axis); }
+.badge.copy-defines { border-color: var(--accent); }
+.badge.copy-defines::before { background: var(--accent); }
+.badge.copy-same::before { background: var(--good); }
+.badge.copy-variant::before { background: var(--axis); }
+.badge.copy-drift { border-color: var(--critical); color: var(--critical); }
+.badge.copy-drift::before { background: var(--critical); }
+a.chip { color: inherit; }

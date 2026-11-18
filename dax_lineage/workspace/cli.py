@@ -124,6 +124,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("restore", help="load a backup into an empty workspace (SQLite or Postgres)")
     p.add_argument("file")
     p.add_argument("--force", action="store_true", help="replace what this workspace holds")
+    p = sub.add_parser("metrics", help="the metric glossary: each metric's copies and drift, or candidates")
+    p.add_argument("action", nargs="?", default="list", choices=["list", "drift", "candidates"])
     p = sub.add_parser("review", help="versions waiting for review (or --all)")
     p.add_argument("--all", action="store_true", help="every reviewable version, with its state")
     args = parser.parse_args(argv)
@@ -181,6 +183,26 @@ def main(argv=None) -> int:
         print(_table(rows, ["id", "model", "change", "edits", "status", "proposed by", "decided by"]) or "no open changes")
     elif args.command == "companion":
         return _companion(args.out)
+    elif args.command == "metrics":
+        from . import metrics as M
+        data = M.glossary(store)
+        if args.action == "candidates":
+            rows = [(c["name"], c["models"], c["versions"], ", ".join(x["model_name"] for x in c["copies"])[:70])
+                    for c in data["candidates"]]
+            print(_table(rows, ["measure", "models", "different DAX", "in"]) or "no measure is copied across models")
+        elif args.action == "drift":
+            rows = []
+            for m in data["metrics"]:
+                for c in M.copies(store, M.get(store, m["id"])):
+                    if c["status"] == "drift":
+                        rows.append((m["name"], c["model_name"], c["name"], m["owner"]))
+            print(_table(rows, ["metric", "model", "measure", "metric owner"]) or "no drift")
+        else:
+            rows = [(m["name"], m["status"] + (" (source changed)" if m["source"] == "changed" else ""), m["owner"],
+                     m["model_name"] or "", m["counts"]["same"], m["counts"]["variant"], m["counts"]["drift"])
+                    for m in data["metrics"]]
+            print(_table(rows, ["metric", "status", "owner", "defined in", "same", "variants", "drift"])
+                  or "no metrics yet: make one from a measure's page, or see `metrics candidates`")
     elif args.command == "users":
         return _users(store, args)
     elif args.command == "tokens":
