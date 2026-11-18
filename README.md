@@ -1,7 +1,7 @@
 # DAX lineage explorer
 
 See what every DAX measure in a Power BI, Fabric or Analysis Services model reads,
-what reads it, **which report visuals use it, and which measures nothing uses at all** — from the
+what reads it, **which report visuals use it, and which measures nothing uses at all** - from the
 output of one query, [`INFO.MEASURES()`](https://learn.microsoft.com/en-us/dax/info-measures-function-dax),
 and the report file.
 
@@ -388,10 +388,10 @@ The design behind it is in the project's design document; this completes its fiv
 
 Same rules and same results:
 
-- **In the browser** — export the query result to Excel and drop it on the
+- **In the browser** - export the query result to Excel and drop it on the
   [demo page](https://aihtn2708.github.io/DAX-lineage-explorer/). The file is read in your browser tab and
   never uploaded. No install.
-- **From the command line** — `daxlin`, a zero-dependency Python package, for CI checks, scripted exports and
+- **From the command line** - `daxlin`, a zero-dependency Python package, for CI checks, scripted exports and
   Graphviz / Mermaid / JSON output.
 
 ```
@@ -473,7 +473,7 @@ query editor on a semantic model; **DAX Studio / SSMS / Tabular Editor** → any
 XMLA endpoint; **Power BI REST** → `POST /datasets/{id}/executeQueries`.
 
 `INFO.COLUMNS` matters more than it looks. DAX resolves a bare `[Amount]` to a
-measure if one exists and to a column otherwise — without the column catalogue
+measure if one exists and to a column otherwise - without the column catalogue
 the tool cannot tell a column reference from a typo, and says so rather than
 guessing.
 
@@ -500,7 +500,7 @@ Either way the page needs no server and no network. It has:
 - a layered graph, dependencies on the left, dependents on the right, one layer
   per step of the longest chain;
 - a sidebar laid out like Power BI's field list: each table, then its display
-  folders (nested `Folder\Subfolder` too), then its measures and columns —
+  folders (nested `Folder\Subfolder` too), then its measures and columns -
   collapsible, and it opens to whatever you click in the graph;
 - the **chain depth** beside each measure: how many steps the longest path from
   it down to the model's source columns takes. `1` reads columns directly, like
@@ -509,7 +509,7 @@ Either way the page needs no server and no network. It has:
 - click-to-trace: the upstream chain in blue, the downstream chain in orange,
   everything unrelated dimmed, or hidden with **Focus**;
 - a detail panel with the DAX, syntax highlighted, whose references are
-  clickable — follow `[Gross Margin]` straight to that measure;
+  clickable - follow `[Gross Margin]` straight to that measure;
 - filters for columns, tables, hidden measures and unreferenced columns, a
   search over names, descriptions and expression text, and sorting by chain
   depth or by how often a measure is referenced;
@@ -568,7 +568,7 @@ dependency, and no further. It is not a parser and does not need to be.
 - `Table[Column]` and `'Table Name'[Column]` are columns; `]]` inside a name is
   an escaped bracket.
 - A bare `[Ref]` is a measure if the export has one by that name, otherwise a
-  column — the engine's own resolution order.
+  column - the engine's own resolution order.
 - `VAR` names are tracked, so `VAR _rows = FILTER(...)` followed by
   `SUMX(_rows, _rows[Amount])` reads `[Amount]` as a column and not `_rows` as a
   table.
@@ -592,7 +592,7 @@ not what the engine does with it.
 - Row-level security, field parameters and detail-rows expressions are not read.
 - `INFO.MEASURES` is available in Power BI Desktop and in recent Analysis
   Services; on an older engine use the `$SYSTEM.TMSCHEMA_MEASURES` DMV instead
-  and export it the same way — the column names match.
+  and export it the same way - the column names match.
 
 ## How the repository is laid out
 
@@ -629,8 +629,8 @@ node scripts/privacy_audit.js offline       # every request the page makes, in a
 ```
 
 `examples/` holds a sales model in the shape a real export arrives in, and
-`examples/troubled/` a deliberately broken one — a cycle, a dangling reference,
-a misspelled measure, a measure in the `Error` state — for exercising `check`.
+`examples/troubled/` a deliberately broken one - a cycle, a dangling reference,
+a misspelled measure, a measure in the `Error` state - for exercising `check`.
 
 Licence: Apache-2.0.
 
