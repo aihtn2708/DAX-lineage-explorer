@@ -84,4 +84,7 @@ try {
     Write-Host "No permission to write to $tools." -ForegroundColor Yellow
     Write-Host "Ask someone with administrator rights to run:"
     Write-Host "  Copy-Item `"$local`" `"$tools`""
+    Write-Host ""
+    Write-Host "Or do without the button: open your .pbix in Power BI Desktop, then double-click"
+    Write-Host "run-live.bat in $repo"
 }

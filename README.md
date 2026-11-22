@@ -185,6 +185,10 @@ powershell -ExecutionPolicy Bypass -File .\install-live.ps1 -DownloadTom
 - Leave out `-DownloadTom` if the workspace companion, Tabular Editor 2 or the SqlServer PowerShell
   module is already installed.
 - Restart Power BI Desktop afterwards. **Live lineage** appears on the External Tools ribbon.
+- **No administrator rights?** Putting the button into Desktop needs them, but the button is only a
+  shortcut. Without it, open your .pbix in Desktop, then double-click **`run-live.bat`** in the
+  repository folder. It finds the Desktop window opened last by itself. With several windows open,
+  give one with `run-live.bat -Server localhost:<port>`; the watcher lists the ports.
 
 **Use it:**
 

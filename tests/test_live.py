@@ -231,3 +231,6 @@ def test_the_desktop_button_files():
     assert "/api/snapshot" in watcher and "X-Live-Token" in watcher and ".dax_lineage\\live.json" in watcher
     installer = (folder / "install-live.ps1").read_text(encoding="utf-8")
     assert "PowerBILive.ps1" in installer and "%server%" in installer
+    assert "msmdsrv.port.txt" in watcher and '[string] $Server = ""' in watcher   # runs without the button too
+    launcher = (ROOT / "run-live.bat").read_text(encoding="utf-8")
+    assert "dax_lineage\\live_tool\\PowerBILive.ps1" in launcher and "ExecutionPolicy Bypass" in launcher
