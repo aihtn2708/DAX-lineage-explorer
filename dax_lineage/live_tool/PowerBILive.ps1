@@ -19,12 +19,19 @@
 
     Works in Windows PowerShell 5.1 and PowerShell 7.
 
+    Without the External Tools button (it needs administrator rights to install), run it with no
+    -Server: it finds the model of the Power BI Desktop window opened last. run-live.bat in the
+    repository folder does that.
+
+.EXAMPLE
+    run-live.bat                      (after opening your .pbix in Desktop)
+
 .EXAMPLE
     Registered by install-live.ps1; Desktop runs it as
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File PowerBILive.ps1 -Server "localhost:51542" -Database "<model id>"
 #>
 param(
-    [Parameter(Mandatory = $true)][string] $Server,
+    [string] $Server = "",
     [string] $Database = "",
     [int] $Port = 0,
     [int] $IntervalMs = 1000,
@@ -63,6 +70,47 @@ if (-not $TomPath -and (Test-Path $companionConfig)) {
 }
 $base = "http://127.0.0.1:$Port"
 $tokenFile = Join-Path $HOME ".dax_lineage\live.json"
+
+# -- which Power BI Desktop, when not started from its ribbon -------------------------------------------
+# Each open Desktop window runs its own Analysis Services instance and writes the port it listens
+# on to ...\AnalysisServicesWorkspaces\<workspace>\Data\msmdsrv.port.txt.
+function Port-Open([int] $number) {
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $wait = $client.BeginConnect("127.0.0.1", $number, $null, $null)
+        return ($wait.AsyncWaitHandle.WaitOne(500) -and $client.Connected)
+    } catch { return $false } finally { $client.Close() }
+}
+function Find-Desktops {
+    $roots = @()
+    if ($env:LOCALAPPDATA) { $roots += Join-Path $env:LOCALAPPDATA "Microsoft\Power BI Desktop\AnalysisServicesWorkspaces" }
+    $roots += Join-Path $HOME "Microsoft\Power BI Desktop Store App\AnalysisServicesWorkspaces"
+    $found = @()
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        foreach ($file in Get-ChildItem $root -Recurse -Filter "msmdsrv.port.txt" -ErrorAction SilentlyContinue) {
+            $text = ""
+            try { $text = Get-Content $file.FullName -Raw -Encoding Unicode } catch { }
+            if ($text -notmatch '\d+') { $text = [System.IO.File]::ReadAllText($file.FullName) }
+            if ($text -match '(\d{2,5})' -and (Port-Open ([int]$Matches[1]))) {
+                $found += [pscustomobject]@{ Port = [int]$Matches[1]; Since = $file.LastWriteTime }
+            }
+        }
+    }
+    return @($found | Sort-Object Since -Descending)
+}
+if (-not $Server) {
+    $desktops = @(Find-Desktops)
+    if ($desktops.Count -eq 0) {
+        Quit 1 "No Power BI Desktop with an open model was found. Open your .pbix in Power BI Desktop first, then run this again."
+    }
+    $Server = "localhost:$($desktops[0].Port)"
+    if ($desktops.Count -gt 1) {
+        Say "$($desktops.Count) Power BI Desktop windows are open; watching the one opened last (port $($desktops[0].Port))." "Yellow"
+        Say ("Another one: run-live.bat -Server localhost:<port>, with one of: " + (($desktops | Select-Object -Skip 1 | ForEach-Object { $_.Port }) -join ", "))
+    }
+}
+Say "Power BI Desktop: $Server"
 
 # -- the live server -----------------------------------------------------------------------------------
 function Server-Up {
