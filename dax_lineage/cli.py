@@ -12,6 +12,9 @@ Run the explorer on this machine, with nothing sent anywhere:
     daxlin serve                         # http://127.0.0.1:8765
     daxlin offline -o explorer.html      # one file to open from disk, no server
 
+Follow the measure you edit in Power BI Desktop, on a second screen:
+    daxlin live                          # http://127.0.0.1:8770
+
 A catalogue of every model the team keeps (see `daxlin workspace --help`):
     daxlin workspace add-folder "C:/Users/me/Contoso/BI - Reports"
     daxlin workspace scan
@@ -152,6 +155,19 @@ def main(argv=None) -> int:
         except (AttributeError, ValueError):
             pass
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["live"]:
+        import argparse as _argparse
+        from .live import DEFAULT_PORT, serve as live_serve
+        live_args = _argparse.ArgumentParser(
+            prog="daxlin live",
+            description="Follow the measure you edit in Power BI Desktop, on a second screen. "
+                        "Start 'Live lineage' from Desktop's External Tools ribbon to feed it.")
+        live_args.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
+        live_args.add_argument("--report", help="saved .pbix/.pbit/PBIP to read visuals from, when the watcher "
+                                                "cannot tell which file Desktop has open")
+        live_args.add_argument("--no-open", action="store_true", help="do not open a browser")
+        options = live_args.parse_args(argv[1:])
+        return live_serve(options.port, options.report, open_browser=not options.no_open)
     if argv[:1] == ["workspace"]:
         from .workspace.cli import main as workspace_main
         return workspace_main(argv[1:])

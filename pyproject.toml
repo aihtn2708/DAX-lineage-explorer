@@ -22,7 +22,7 @@ daxlin = "dax_lineage.cli:main"
 packages = ["dax_lineage", "dax_lineage.workspace"]
 
 [tool.setuptools.package-data]
-dax_lineage = ["template.html", "web/*.html"]
+dax_lineage = ["template.html", "web/*.html", "web/*.js", "web/*.css", "live_tool/*"]
 "dax_lineage.workspace" = ["static/*", "companion/*"]
 
 [tool.pytest.ini_options]

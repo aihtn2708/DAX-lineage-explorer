@@ -162,6 +162,52 @@ py -m dax_lineage unused -s "Supply Chain Sample.pbix"
 If you do want the short command: `py -m pip install -e .`, then add the
 `Scripts` folder pip mentions to your PATH (or reopen the terminal).
 
+## Live lineage: follow the measure you edit (preview)
+
+Put this page on a second screen while you work in Power BI Desktop. Each time you commit an edit to
+a measure or calculated column (press Enter, or click the tick in the formula bar), the page shows:
+
+- the DAX before and after;
+- what it reads, and everything that reads it, all the way down;
+- the visuals in the saved report that show it, directly or through other measures;
+- warnings: the measure no longer works, it reads something the model doesn't have, measures that
+  read it just stopped working, or it is part of a loop.
+
+![Live lineage after an edit that breaks two measures](docs/assets/live-lineage.png)
+
+**Set up once per PC** (Windows, with Python 3.9 or later):
+
+```powershell
+cd <the repository folder>\dax_lineage\live_tool
+powershell -ExecutionPolicy Bypass -File .\install-live.ps1 -DownloadTom
+```
+
+- Leave out `-DownloadTom` if the workspace companion, Tabular Editor 2 or the SqlServer PowerShell
+  module is already installed.
+- Restart Power BI Desktop afterwards. **Live lineage** appears on the External Tools ribbon.
+
+**Use it:**
+
+1. Open your .pbix in Desktop and click **Live lineage**.
+2. A small window starts watching the model, and the page opens at http://127.0.0.1:8770.
+3. Drag the page to your other screen.
+4. Edit as usual: after each commit, the page follows within about a second.
+5. Click any name on the page to look at it instead. **Following edits** switches back.
+
+How it works, and what it doesn't do:
+
+- The watcher (`PowerBILive.ps1`) connects to the model in Desktop through Microsoft's Tabular Object
+  Model, read-only.
+- About once a second it checks for changes, and sends the measures and columns to `daxlin live`
+  on 127.0.0.1. Nothing leaves your PC.
+- Posts need a token that only your Windows account can read (`~/.dax_lineage/live.json`).
+- Desktop doesn't share what you type before you commit, so the page follows commits, not
+  keystrokes.
+- Visuals come from the **saved** file. The watcher finds it from the command line Desktop was
+  started with. If you opened the file from inside Desktop, type its path at the bottom of the page.
+- You can also run the page by hand: `py -m dax_lineage live`. Add `--report "C:\path\Sales.pbix"`
+  to give it the saved file.
+
 ## Team workspace: every model in one catalogue (preview)
 
 **[Try the workspace demo](https://aihtn2708.github.io/DAX-lineage-explorer/workspace-demo/)**: four
