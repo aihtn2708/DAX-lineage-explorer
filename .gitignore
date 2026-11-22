@@ -14,3 +14,8 @@ lineage.dot
 pbi-workspace.db*
 *.db-wal
 *.db-shm
+# written per PC by the installers
+dax_lineage/live_tool/live.config.json
+dax_lineage/live_tool/PowerBILive.pbitool.json
+dax_lineage/workspace/companion/companion.config.json
+dax_lineage/workspace/companion/PowerBIWorkspace.pbitool.json

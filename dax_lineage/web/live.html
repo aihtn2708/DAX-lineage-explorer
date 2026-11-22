@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Live lineage</title>
+  <link rel="stylesheet" href="live.css">
+  <script src="live.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="brand">Live lineage</div>
+    <div id="model" class="model"></div>
+    <div class="grow"></div>
+    <form id="lookup" role="search" autocomplete="off">
+      <input id="q" type="search" placeholder="Look up a measure" aria-label="Look up a measure or column">
+      <ul id="hits" class="hits" hidden></ul>
+    </form>
+    <button id="follow" type="button" aria-pressed="true">Following edits</button>
+  </header>
+  <div class="layout">
+    <main id="view" aria-live="polite"></main>
+    <aside>
+      <h2>Recent edits</h2>
+      <ol id="history" class="history"></ol>
+    </aside>
+  </div>
+  <footer id="footer"></footer>
+</body>
+</html>
